@@ -22,8 +22,10 @@ use super::{Ctx, Descriptor, Handled, Kind, Play, Seat, Table};
 
 pub const DESCRIPTOR: Descriptor = Descriptor {
     name: "Wordle",
+    blurb: "race to a word, or solo",
     wire: GAME,
     alone: true,
+    thumb: ui::thumb,
     start,
 };
 

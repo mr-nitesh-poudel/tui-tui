@@ -9,8 +9,9 @@
 //! # Adding a game
 //!
 //! 1. A module here, say `games/go/`, with a type that implements [`Play`].
-//! 2. A [`Descriptor`] in it: the game's name, its wire id and version, and
-//!    how to start one at a [`Seat`].
+//! 2. A [`Descriptor`] in it: the game's name, a line about it, its wire id
+//!    and version, a thumbnail for its card in the lobby, and how to start
+//!    one at a [`Seat`].
 //! 3. One line in [`Kind::ALL`].
 //!
 //! The lobby, the command line, pairing and invites pick it up from there.
@@ -51,6 +52,9 @@ pub mod wordle;
 pub use play::{Handled, Play};
 pub use table::{Conn, Ctx, Leave, Table, Waker};
 
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+
 use crate::session;
 
 /// Everything the rest of the program needs to know about one game.
@@ -58,12 +62,17 @@ pub struct Descriptor {
     /// Shown in the lobby, and typed on the command line in lower case, so
     /// one word.
     pub name: &'static str,
+    /// A few words under the name on the game's card in the lobby.
+    pub blurb: &'static str,
     /// What the two sides agree on when pairing. Bump the version whenever
     /// the game's messages change in a way an older build would misread.
     pub wire: session::Game,
     /// Played by one player at [`Seat::Local`], rather than two sharing the
     /// keyboard.
     pub alone: bool,
+    /// Draws a picture of the game into the area given, for its card in the
+    /// lobby. It must cope with any size, down to nothing, and stay inside.
+    pub thumb: fn(&mut Buffer, Rect),
     /// A new game, sat at `seat`, at a table with this connection.
     pub start: fn(Seat, Ctx) -> Box<Table<dyn Play>>,
 }
@@ -89,6 +98,19 @@ impl Kind {
     #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name
+    }
+
+    #[must_use]
+    pub fn blurb(self) -> &'static str {
+        self.0.blurb
+    }
+
+    /// Draws the game's picture into `area` of `buf`.
+    pub fn thumb(self, buf: &mut Buffer, area: Rect) {
+        let area = area.intersection(buf.area);
+        if !area.is_empty() {
+            (self.0.thumb)(buf, area);
+        }
     }
 
     /// Whether playing locally is one player on their own, rather than two

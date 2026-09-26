@@ -1091,3 +1091,30 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     }
     chrome::footer(f, area, ctx, None, &keys);
 }
+
+/// The game's card in the lobby: the last few guesses of a round, marked,
+/// ending on the answer.
+pub fn thumb(buf: &mut Buffer, area: Rect) {
+    const GUESSES: [&str; 4] = ["slate", "crane", "meats", "games"];
+    const TILE: u16 = 3;
+    let area = area.intersection(buf.area);
+    let Some(answer) = super::words::word(GUESSES[GUESSES.len() - 1]) else {
+        return;
+    };
+    let across = cells(LEN) * (TILE + GAP) - GAP;
+    // Whatever fits, the answer always among it.
+    let shown = GUESSES.len().min(usize::from(area.height));
+    let board = centred(area, across, cells(shown));
+    for (row, text) in GUESSES[GUESSES.len() - shown..].iter().enumerate() {
+        let Some(guess) = super::words::word(text) else {
+            continue;
+        };
+        let marks = super::words::score(&guess, &answer);
+        for (col, (&letter, &mark)) in guess.iter().zip(&marks).enumerate() {
+            let x = board.x.saturating_add(cells(col) * (TILE + GAP));
+            let tile = Rect::new(x, board.y.saturating_add(cells(row)), TILE, 1);
+            let look = Look::Marked(mark_colour(mark));
+            draw_tile(buf, tile.intersection(area), Some(letter), look, 1.0);
+        }
+    }
+}

@@ -233,3 +233,28 @@ fn clicks_land_safely_at_any_size() {
         }
     }
 }
+
+#[test]
+fn thumbnails_draw_at_any_size_and_stay_inside() {
+    use ratatui::buffer::Buffer;
+    use tui_tui::games::Kind;
+    let screen = Rect::new(0, 0, 60, 20);
+    for &kind in Kind::ALL {
+        for (w, h) in (0..=40).flat_map(|w| (0..=10).map(move |h| (w, h))) {
+            let area = Rect::new(5, 3, w, h);
+            let mut buf = Buffer::empty(screen);
+            kind.thumb(&mut buf, area);
+            for y in 0..screen.height {
+                for x in 0..screen.width {
+                    if !area.contains((x, y).into()) {
+                        assert_eq!(buf[(x, y)].symbol(), " ", "{kind:?} at {w}x{h}: ({x}, {y})");
+                        assert_eq!(buf[(x, y)].bg, ratatui::style::Color::Reset);
+                    }
+                }
+            }
+        }
+        // Up against the edge of the screen, and past it.
+        let mut buf = Buffer::empty(screen);
+        kind.thumb(&mut buf, Rect::new(50, 15, 30, 10));
+    }
+}

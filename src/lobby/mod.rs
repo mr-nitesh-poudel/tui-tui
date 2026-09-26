@@ -1,5 +1,7 @@
-//! The first screen: pick a game, then host, join with a code, challenge a
-//! friend, or share a keyboard.
+//! The first screen: a shelf of games along the top, and under it what can be
+//! done with the one picked: host it, share a keyboard over it, or challenge
+//! a friend to it. Joining needs no game (the host names it), so a code can be
+//! typed from anywhere.
 //!
 //! Like a game, this only holds state and decides what a key or click means;
 //! [`draw_lobby`] draws it and `main` acts on the [`Choice`] it returns.
@@ -8,7 +10,7 @@ use iroh::EndpointId;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 
 use crate::games::Kind;
 use crate::profile::Contact;
@@ -17,39 +19,36 @@ use crate::session::code::{complete, is_prefix, is_word};
 
 mod ui;
 
-pub use ui::{LobbyGeometry, draw_lobby};
+pub use ui::{LobbyGeometry, Shelf, draw_lobby};
 
 /// Friends listed at once, most recently played first.
 pub const FRIENDS_SHOWN: usize = 6;
 
 use crate::session::name::NAME_MAX;
 
+/// What can be done with the game picked, other than challenge a friend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
-    /// Which game hosting, a local game or a challenge starts.
-    Game,
     Host,
-    Join,
     Local,
-    Name,
-    Quit,
 }
 
 impl Item {
+    /// In the order they are listed.
+    pub const ALL: [Item; 2] = [Item::Host, Item::Local];
+
+    /// What the item says. The status bar says what it means for the game
+    /// picked: on your own, or two taking turns at one keyboard.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Item::Game => "Game",
             Item::Host => "Host a game",
-            Item::Join => "Join a game",
-            Item::Local => "Play on one keyboard",
-            Item::Name => "Your name",
-            Item::Quit => "Quit",
+            Item::Local => "Play solo",
         }
     }
 }
 
-/// One selectable line, or pair of lines, in the lobby.
+/// One selectable line in the lobby.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
     Item(Item),
@@ -129,9 +128,7 @@ impl Lobby {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            // Past the game, onto hosting: most of the time the game is
-            // already the one wanted.
-            selected: 1,
+            selected: 0,
             game: 0,
             editing: None,
             input: String::new(),
@@ -148,16 +145,11 @@ impl Lobby {
 
     pub fn rows(&self) -> Vec<Row> {
         let friends = self.friends.len().min(FRIENDS_SHOWN);
-        [
-            Row::Item(Item::Game),
-            Row::Item(Item::Host),
-            Row::Item(Item::Join),
-            Row::Item(Item::Local),
-        ]
-        .into_iter()
-        .chain((0..friends).map(Row::Friend))
-        .chain([Row::Item(Item::Name), Row::Item(Item::Quit)])
-        .collect()
+        Item::ALL
+            .into_iter()
+            .map(Row::Item)
+            .chain((0..friends).map(Row::Friend))
+            .collect()
     }
 
     /// The game hosting, a local game or a challenge would start.
@@ -166,14 +158,17 @@ impl Lobby {
         Kind::ALL[self.game % Kind::ALL.len()]
     }
 
-    /// Whether the selection is on the game row, where the arrows change it.
+    /// The friend selected, if it is one.
     #[must_use]
-    pub fn on_game(&self) -> bool {
-        self.rows().get(self.selected) == Some(&Row::Item(Item::Game))
+    pub fn on_friend(&self) -> Option<usize> {
+        match self.rows().get(self.selected) {
+            Some(&Row::Friend(i)) => Some(i),
+            _ => None,
+        }
     }
 
     /// Steps through the games, wrapping round at either end.
-    fn next_game(&mut self, step: isize) {
+    pub fn next_game(&mut self, step: isize) {
         let n = Kind::ALL.len().cast_signed();
         self.game = (self.game.cast_signed() + step).rem_euclid(n) as usize;
     }
@@ -189,7 +184,7 @@ impl Lobby {
     pub fn set_friends(&mut self, friends: Vec<Contact>) {
         let was = self.rows().get(self.selected).copied();
         self.friends = friends;
-        let last = self.rows().len() - 1;
+        let last = self.rows().len().saturating_sub(1);
         self.selected = match was {
             Some(Row::Item(item)) => self.row_of(item),
             _ => self.selected.min(last),
@@ -238,17 +233,24 @@ impl Lobby {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = (self.selected + rows.len() - 1) % rows.len();
             }
-            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1) % rows.len();
             }
-            KeyCode::Left | KeyCode::Char('h') if self.on_game() => self.next_game(-1),
-            KeyCode::Right | KeyCode::Char('l') if self.on_game() => self.next_game(1),
-            KeyCode::Enter | KeyCode::Char(' ') => return self.activate(self.selected),
-            KeyCode::Char('x') => {
-                if let Some(Row::Friend(i)) = rows.get(self.selected) {
-                    self.forgetting = Some(*i);
+            // Between what to do and whom to challenge.
+            KeyCode::Tab | KeyCode::BackTab => {
+                if self.on_friend().is_some() {
+                    self.selected = 0;
+                } else if !self.friends.is_empty() {
+                    self.selected = Item::ALL.len();
                 }
             }
+            // The game can be changed from anywhere: everything below it
+            // is about it.
+            KeyCode::Left | KeyCode::Char('h') => self.next_game(-1),
+            KeyCode::Right | KeyCode::Char('l') => self.next_game(1),
+            KeyCode::Enter | KeyCode::Char(' ') => return self.activate(self.selected),
+            KeyCode::Char('n') => self.rename(),
+            KeyCode::Char('x') => self.forgetting = self.on_friend(),
             KeyCode::Char('q') | KeyCode::Esc => return Some(Choice::Quit),
             // Every code starts with its number, so typing one is as good as
             // choosing to join.
@@ -329,8 +331,8 @@ impl Lobby {
         if self.invite.is_some() {
             return None;
         }
-        let rows = self.rows();
-        let g = LobbyGeometry::new(self.area, &rows);
+        let g = LobbyGeometry::new(self.area, self);
+        let at = Position::new(ev.column, ev.row);
         let hit = g.row_at(ev.column, ev.row);
         match ev.kind {
             MouseEventKind::Moved if self.editing.is_none() => {
@@ -344,7 +346,11 @@ impl Lobby {
                     self.selected = i;
                     return self.activate(i);
                 }
-                if g.input.contains((ev.column, ev.row).into()) {
+                if let Some(game) = g.card_at(ev.column, ev.row) {
+                    self.game = game;
+                } else if g.name.contains(at) {
+                    self.rename();
+                } else if g.input.contains(at) {
                     self.edit(Field::Code);
                 }
             }
@@ -355,32 +361,19 @@ impl Lobby {
 
     fn activate(&mut self, i: usize) -> Option<Choice> {
         match *self.rows().get(i)? {
-            Row::Item(Item::Game) => {
-                self.next_game(1);
-                None
-            }
             Row::Item(Item::Host) => Some(Choice::Host),
-            Row::Item(Item::Join) => {
-                self.edit(Field::Code);
-                None
-            }
             Row::Item(Item::Local) => Some(Choice::Local),
-            Row::Item(Item::Name) => {
-                self.name_input = self.name.clone();
-                self.edit(Field::Name);
-                None
-            }
-            Row::Item(Item::Quit) => Some(Choice::Quit),
             Row::Friend(f) => self.friends.get(f).map(|f| Choice::Challenge(f.id)),
         }
     }
 
+    fn rename(&mut self) {
+        self.name_input = self.name.clone();
+        self.edit(Field::Name);
+    }
+
     fn edit(&mut self, field: Field) {
         self.editing = Some(field);
-        self.selected = self.row_of(match field {
-            Field::Code => Item::Join,
-            Field::Name => Item::Name,
-        });
     }
 
     /// Typed text goes in the way it will be read back: lower case, with any

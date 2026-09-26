@@ -1,4 +1,5 @@
-//! The lobby: the menu, typing a code in, friends, and invites.
+//! The lobby: the shelf of games, what to do with one, typing a code in,
+//! friends, and invites.
 
 use iroh::SecretKey;
 use ratatui::crossterm::event::{
@@ -7,8 +8,8 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Rect;
 use tui_tui::games::chess::App;
 use tui_tui::games::{Conn, Kind, Table};
-use tui_tui::lobby::LobbyGeometry;
 use tui_tui::lobby::{Choice, Entry, FRIENDS_SHOWN, Field, Invited, Item, Lobby, Row};
+use tui_tui::lobby::{LobbyGeometry, Shelf};
 use tui_tui::profile::Contact;
 use tui_tui::session::Code;
 
@@ -46,22 +47,19 @@ fn joining(lobby: &Lobby) -> bool {
 }
 
 #[test]
-fn the_menu_picks_what_is_selected() {
+fn the_rows_pick_what_is_selected() {
     let mut lobby = Lobby::new();
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Host));
 
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Down);
-    key(&mut lobby, KeyCode::Down);
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Local));
 
-    // Above hosting is the game, and wrapping upwards from there lands on
-    // the last item.
+    // Wrapping upwards from the first lands on the last.
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Up);
-    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Game));
-    key(&mut lobby, KeyCode::Up);
-    assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Quit));
+    assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Local));
 
     assert_eq!(
         key(&mut Lobby::new(), KeyCode::Char('q')),
@@ -70,17 +68,20 @@ fn the_menu_picks_what_is_selected() {
 }
 
 #[test]
-fn the_game_comes_first_and_changes_in_place() {
+fn left_and_right_change_the_game_from_anywhere() {
     let mut lobby = Lobby::new();
-    assert_eq!(lobby.rows()[0], Row::Item(Item::Game));
-    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
+    lobby.set_friends(vec![friend("alice", 0)]);
     assert_eq!(lobby.game(), Kind::DEFAULT);
 
-    key(&mut lobby, KeyCode::Up);
-    for code in [KeyCode::Right, KeyCode::Left, KeyCode::Enter] {
-        assert_eq!(key(&mut lobby, code), None, "{code:?} starts nothing");
-        assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Game));
+    for selected in 0..lobby.rows().len() {
+        lobby.selected = selected;
+        for code in [KeyCode::Right, KeyCode::Left] {
+            assert_eq!(key(&mut lobby, code), None, "{code:?} starts nothing");
+            assert_eq!(lobby.selected, selected, "and leaves the selection be");
+        }
     }
+    key(&mut lobby, KeyCode::Right);
+    assert_eq!(lobby.game, 1 % Kind::ALL.len());
     // Round the list and back to where it started, however long it is.
     let before = lobby.game();
     for _ in 0..Kind::ALL.len() {
@@ -90,24 +91,20 @@ fn the_game_comes_first_and_changes_in_place() {
 }
 
 #[test]
-fn left_and_right_only_change_the_game_on_its_row() {
-    let mut lobby = Lobby::new();
-    lobby.game = 0;
-    key(&mut lobby, KeyCode::Right);
-    assert_eq!(lobby.game, 0);
-    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
+fn what_is_offered_reads_the_same_for_every_game() {
+    assert_eq!(Item::Host.label(), "Host a game");
+    assert_eq!(Item::Local.label(), "Play solo");
 }
 
 #[test]
-fn joining_opens_the_code_box_and_esc_backs_out() {
+fn esc_backs_out_of_a_code() {
     let mut lobby = Lobby::new();
-    key(&mut lobby, KeyCode::Down);
-    assert_eq!(key(&mut lobby, KeyCode::Enter), None);
+    typed(&mut lobby, "4");
     assert!(joining(&lobby));
 
     // In the box, q is part of a word, not a way out.
     assert_eq!(key(&mut lobby, KeyCode::Char('q')), None);
-    assert_eq!(lobby.input, "q");
+    assert_eq!(lobby.input, "4q");
 
     key(&mut lobby, KeyCode::Esc);
     assert!(!joining(&lobby));
@@ -118,7 +115,6 @@ fn typing_a_number_from_the_menu_starts_a_code() {
     let mut lobby = Lobby::new();
     assert_eq!(typed(&mut lobby, "42 Tiger marble ocean"), None);
     assert!(joining(&lobby));
-    assert_eq!(lobby.selected, index(&lobby, Item::Join));
     assert_eq!(lobby.input, "42-tiger-marble-ocean");
     assert_eq!(
         key(&mut lobby, KeyCode::Enter),
@@ -203,9 +199,10 @@ fn pasting_takes_the_code_or_the_whole_command() {
 #[test]
 fn clicking_an_item_chooses_it() {
     let mut lobby = Lobby::new();
+    lobby.name = "ace".into();
     lobby.set_friends(vec![friend("alice", 0)]);
     lobby.area = Rect::new(0, 0, 80, 30);
-    let g = LobbyGeometry::new(lobby.area, &lobby.rows());
+    let g = LobbyGeometry::new(lobby.area, &lobby);
     let row = |i: usize| g.rows[i];
     let at = |i: usize| (row(i).x + 2, row(i).y);
     let mouse = |kind, (column, row)| MouseEvent {
@@ -236,30 +233,52 @@ fn clicking_an_item_chooses_it() {
         Some(Choice::Challenge(alice))
     );
 
+    // A card picks its game, and starts nothing.
+    let last = Kind::ALL.len() - 1;
+    let card = g.cards[last];
+    assert_eq!(lobby.on_mouse(mouse(click, (card.x + 1, card.y + 1))), None);
+    assert_eq!(lobby.game, last);
+
+    // The name renames, and the status bar takes a code.
+    assert_eq!(lobby.on_mouse(mouse(click, (g.name.x + 1, g.name.y))), None);
+    assert_eq!(lobby.editing, Some(Field::Name));
+    lobby.editing = None;
     assert_eq!(lobby.on_mouse(mouse(click, (g.input.x, g.input.y))), None);
     assert!(joining(&lobby));
 }
 
 #[test]
-fn every_row_has_its_own_place_on_screen() {
+fn every_row_and_card_has_its_own_place_on_screen() {
     let mut lobby = Lobby::new();
-    for friends in [0, 1, FRIENDS_SHOWN, FRIENDS_SHOWN + 3] {
-        lobby.set_friends((0..friends).map(|i| friend(&format!("f{i}"), 0)).collect());
-        let rows = lobby.rows();
-        let g = LobbyGeometry::new(Rect::new(0, 0, 80, 40), &rows);
-        assert_eq!(g.rows.len(), rows.len());
-        for pair in g.rows.windows(2) {
-            assert!(
-                pair[0].bottom() <= pair[1].y,
-                "rows overlap with {friends} friends"
-            );
+    for (w, h) in [(80, 24), (80, 40), (50, 30), (140, 50)] {
+        for friends in [0, 1, FRIENDS_SHOWN, FRIENDS_SHOWN + 3] {
+            lobby.set_friends((0..friends).map(|i| friend(&format!("f{i}"), 0)).collect());
+            let rows = lobby.rows();
+            let g = LobbyGeometry::new(Rect::new(0, 0, w, h), &lobby);
+            let at = format!("{friends} friends at {w}x{h}");
+            assert_eq!(g.rows.len(), rows.len());
+            assert_eq!(g.cards.len(), Kind::ALL.len());
+            let placed: Vec<Rect> = g.rows.iter().chain(&g.cards).copied().collect();
+            for (i, a) in placed.iter().enumerate() {
+                assert!(a.height > 0, "all fit, {at}");
+                for b in &placed[i + 1..] {
+                    assert!(!a.intersects(*b), "{a:?} and {b:?} overlap, {at}");
+                }
+                assert!(a.bottom() <= g.status.y, "clear of the status bar, {at}");
+                assert!(a.y >= g.header.bottom(), "clear of the header, {at}");
+            }
         }
-        assert!(g.rows.iter().all(|r| r.height > 0), "all fit at 80x40");
-        // The code is typed into the join row, and the menu clears the
-        // status bar.
-        assert_eq!(g.input, g.rows[index(&lobby, Item::Join)]);
-        assert!(g.rows.last().unwrap().bottom() <= g.status.y);
     }
+}
+
+#[test]
+fn the_shelf_gives_way_before_the_rows() {
+    let lobby = Lobby::new();
+    let shelf = |w, h| LobbyGeometry::new(Rect::new(0, 0, w, h), &lobby).shelf;
+    assert_eq!(shelf(80, 24), Shelf::Cards { thumbs: true });
+    assert_eq!(shelf(80, 16), Shelf::Cards { thumbs: false });
+    assert_eq!(shelf(80, 10), Shelf::Tabs);
+    assert_eq!(shelf(30, 24), Shelf::Tabs);
 }
 
 #[test]
@@ -268,10 +287,14 @@ fn enter_on_a_friend_challenges_them_and_x_forgets() {
     lobby.set_friends(vec![friend("alice", 2), friend("bob", 1)]);
     let (alice, bob) = (lobby.friends[0].id, lobby.friends[1].id);
 
-    // Host, Join, Local, then the friends.
-    for _ in 0..3 {
-        key(&mut lobby, KeyCode::Down);
-    }
+    // Tab goes over to the friends, and back.
+    key(&mut lobby, KeyCode::Tab);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Friend(0));
+    key(&mut lobby, KeyCode::Tab);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
+    // As do the arrows, past what there is to do.
+    key(&mut lobby, KeyCode::Down);
+    key(&mut lobby, KeyCode::Down);
     assert_eq!(lobby.rows()[lobby.selected], Row::Friend(0));
     assert_eq!(
         key(&mut lobby, KeyCode::Enter),
@@ -290,19 +313,21 @@ fn enter_on_a_friend_challenges_them_and_x_forgets() {
         Some(Choice::Forget(bob))
     );
 
-    // x means nothing away from a friend.
+    // x means nothing away from a friend, and Tab nothing without one.
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Char('x'));
     assert_eq!(lobby.forgetting, None);
+    key(&mut lobby, KeyCode::Tab);
+    assert_eq!(lobby.selected, 0);
 }
 
 #[test]
 fn the_selection_stays_put_when_friends_change() {
     let mut lobby = Lobby::new();
     lobby.set_friends(vec![friend("alice", 0)]);
-    lobby.selected = index(&lobby, Item::Name);
+    lobby.selected = index(&lobby, Item::Local);
     lobby.set_friends(vec![]);
-    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Name));
+    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Local));
 
     lobby.set_friends(vec![friend("alice", 0), friend("bob", 0)]);
     lobby.selected = 4;
@@ -314,8 +339,7 @@ fn the_selection_stays_put_when_friends_change() {
 fn renaming_edits_in_place() {
     let mut lobby = Lobby::new();
     lobby.name = "ace".into();
-    lobby.selected = index(&lobby, Item::Name);
-    assert_eq!(key(&mut lobby, KeyCode::Enter), None);
+    assert_eq!(key(&mut lobby, KeyCode::Char('n')), None);
     assert_eq!(lobby.editing, Some(Field::Name));
     assert_eq!(lobby.name_input, "ace");
 
@@ -328,8 +352,7 @@ fn renaming_edits_in_place() {
     assert_eq!(lobby.editing, None);
 
     // Esc keeps the old name.
-    lobby.selected = index(&lobby, Item::Name);
-    key(&mut lobby, KeyCode::Enter);
+    key(&mut lobby, KeyCode::Char('n'));
     typed(&mut lobby, "zzz");
     assert_eq!(key(&mut lobby, KeyCode::Esc), None);
     assert_eq!(lobby.editing, None);

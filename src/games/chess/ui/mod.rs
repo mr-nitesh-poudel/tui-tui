@@ -10,6 +10,7 @@ mod board;
 mod panels;
 mod pieces;
 
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::*;
 
@@ -22,7 +23,7 @@ use panels::{draw_footer, draw_promotion, draw_sidebar, draw_verdict};
 use super::app::App;
 use super::rules::PROMOTION_ROLES;
 use crate::games::{Ctx, chat};
-use crate::ui::centred;
+use crate::ui::{cells, centred};
 
 pub use board::canvas_colour;
 pub use pieces::piece_ink;
@@ -326,6 +327,52 @@ pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
         && let Some(reveal) = fin.banner
     {
         draw_verdict(f, &g, app, ctx, &fin, reveal);
+    }
+}
+
+/// The game's card in the lobby: a few squares of a board with pieces on
+/// them, drawn as silhouettes when there is room and as figurines when not.
+pub fn thumb(buf: &mut Buffer, area: Rect) {
+    use shakmaty::{Piece, Role};
+    const SHOWN: [(Role, Side); 3] = [
+        (Role::Knight, Side::White),
+        (Role::Queen, Side::Black),
+        (Role::King, Side::White),
+    ];
+    let area = area.intersection(buf.area);
+    // Squares about twice as wide as tall look square; at 9x4 the canvas
+    // pieces keep their detail, and two of them still say chess.
+    let big = area.height >= 4 && area.width >= 2 * 9;
+    let cell = if big { (9, 4) } else { (3, 1) };
+    let n = SHOWN.len().min(usize::from(area.width / cell.0));
+    let board = centred(area, cell.0 * cells(n), cell.1);
+    let mut pieces = Vec::new();
+    for (i, &(role, color)) in SHOWN[..n].iter().enumerate() {
+        let col = cells(i);
+        let square = Rect {
+            x: board.x + col * cell.0,
+            width: cell.0,
+            ..board
+        }
+        .intersection(board);
+        let bg = if i % 2 == 0 { LIGHT } else { DARK };
+        for y in square.top()..square.bottom() {
+            for x in square.left()..square.right() {
+                buf[(x, y)].set_symbol(" ").set_bg(bg);
+            }
+        }
+        let piece = Piece { color, role };
+        if big {
+            pieces.push(board::canvas_piece(piece, (col, 0), (0.0, 0.0), cell));
+        } else if !square.is_empty() {
+            let at = (square.x + square.width / 2, square.y + square.height / 2);
+            buf[at]
+                .set_char(piece.char().to_ascii_uppercase())
+                .set_fg(canvas_colour(color));
+        }
+    }
+    if big {
+        super::canvas::stamp(buf, board, &pieces, super::canvas::Dots::Octant);
     }
 }
 

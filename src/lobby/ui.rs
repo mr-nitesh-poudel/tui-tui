@@ -1,145 +1,137 @@
 //! Drawing the lobby, and the geometry its clicks are tested against.
 //!
-//! A title in big letters, the menu down the middle with the chosen item
-//! boxed, a chessboard running off to the horizon beneath it, and a status
-//! bar that says what the chosen item does. On a small screen the scenery
-//! goes first, then the big letters, then the room between items, so the
-//! menu itself is the last thing to be squeezed.
+//! A header with who is playing, a shelf of game cards, and under it two
+//! columns: what can be done with the game picked, and the friends it can be
+//! played with. The status bar at the bottom says what the chosen row does,
+//! and is where a code is typed. On a small screen the thumbnails go first,
+//! then the cards shrink to a line of tabs, then the friends move under the
+//! actions and the status bar loses its box, so the rows themselves are the
+//! last thing to be squeezed. Stars fill whatever sky is left.
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Position, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use super::{Entry, Field, Item, Lobby, Row};
 use crate::games::Kind;
-use crate::ui::{
-    BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, cells, centred, keycaps, keycaps_fit,
-};
+use crate::session::name::NAME_MAX;
+use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, cells, centred, keycaps, keycaps_fit};
+
+/// How the games are shown along the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shelf {
+    /// A boxed card for each, with a picture of the game if `thumbs`.
+    Cards { thumbs: bool },
+    /// A line of names.
+    Tabs,
+}
+
+impl Shelf {
+    fn height(self) -> u16 {
+        match self {
+            // The box, the name and the blurb, and the picture.
+            Shelf::Cards { thumbs: true } => THUMB_H + 4,
+            Shelf::Cards { thumbs: false } => 4,
+            Shelf::Tabs => 1,
+        }
+    }
+}
 
 /// Where the lobby's pieces sit. [`LobbyGeometry::rows`] lines up with
-/// [`Lobby::rows`], so what is drawn and what is clicked cannot drift apart.
+/// [`Lobby::rows`] and [`LobbyGeometry::cards`] with [`Kind::ALL`], so what is
+/// drawn and what is clicked cannot drift apart.
 pub struct LobbyGeometry {
-    /// The big title, or the one-line one when there is no room for it.
-    pub title: Rect,
-    pub big_title: bool,
-    /// The line under the big title.
-    pub tagline: Option<Rect>,
-    /// One line per row of the menu, the width of the menu.
+    /// The top line: the program's name, and who is playing.
+    pub header: Rect,
+    /// Who is playing, in the header; a click renames.
+    pub name: Rect,
+    pub shelf: Shelf,
+    /// One per game: a card, or a tab.
+    pub cards: Vec<Rect>,
+    /// Above the actions, and above the friends.
+    pub actions_heading: Rect,
+    pub friends_heading: Rect,
+    /// Where the friends would be, when there are none.
+    pub friends_note: Rect,
+    /// One line per row of the lobby, the width of its column.
     pub rows: Vec<Rect>,
-    /// The line saying the friends start here, if there are any.
-    pub friends_heading: Option<Rect>,
-    /// Rows between menu items: 2 leaves room to box the chosen one.
-    pub spacing: u16,
-    /// Where a code is typed: the join row, which turns into a text box.
-    pub input: Rect,
-    /// The status bar: what the chosen item does, or how typing is going.
+    /// The status bar: what the chosen row does, or the code being typed.
     pub status: Rect,
-    /// The line inside the status bar that the words go on.
-    pub hint: Rect,
-    /// The chessboard running off to the horizon, when there is room.
-    pub floor: Option<Rect>,
+    /// The line inside the status bar that the words go on; a click there
+    /// starts a code.
+    pub input: Rect,
     pub footer: Rect,
 }
 
-/// The menu's width, and the chosen item's box.
-const MENU_W: u16 = 40;
-/// The big title: five rows of letters and one of shadow.
-const TITLE_H: u16 = 6;
-const TITLE: &str = "TUI-TUI";
-/// More than this and the floor starts to dominate the screen.
-const FLOOR_MAX: u16 = 14;
+/// The cards and columns never spread wider than this.
+const CONTENT_W: u16 = 72;
+/// At most, and at least before the cards turn into tabs.
+const CARD_W: u16 = 32;
+const CARD_MIN_W: u16 = 18;
+const CARD_GAP: u16 = 2;
+/// Rows of picture on a card.
+const THUMB_H: u16 = 4;
+/// From this wide, the friends sit beside the actions rather than under.
+const TWO_COLUMNS: u16 = 56;
+const GUTTER: u16 = 4;
 
-/// The title's letters, and the shadow they cast.
+/// The program's name, in the header.
 const INK: Color = Color::Rgb(240, 230, 208);
-const SHADOW: Color = Color::Rgb(137, 99, 73);
-/// The board's own squares, for the floor.
-const FLOOR_LIGHT: Color = Color::Rgb(214, 194, 162);
-const FLOOR_DARK: Color = Color::Rgb(137, 99, 73);
-const NIGHT: Color = Color::Rgb(0, 0, 0);
-/// Unchosen items: readable, but a step back from the chosen one.
+/// Unchosen rows: readable, but a step back from the chosen one.
 const QUIET: Color = Color::Rgb(186, 182, 176);
-/// The chosen item, when there is no room to box it.
+/// Behind the chosen row, and the chosen tab.
 const HIGHLIGHT: Color = Color::Rgb(58, 54, 50);
-
-/// Something drawn in the menu's column.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Slot {
-    Row(usize),
-    FriendsHeading,
-}
-
-fn slots(rows: &[Row]) -> Vec<Slot> {
-    let mut out = Vec::with_capacity(rows.len() + 1);
-    for (i, row) in rows.iter().enumerate() {
-        if *row == Row::Friend(0) {
-            out.push(Slot::FriendsHeading);
-        }
-        out.push(Slot::Row(i));
-    }
-    out
-}
 
 /// How much of the lobby a screen has room for.
 #[derive(Clone, Copy)]
 struct Plan {
-    /// 0 for no title, 1 for one line of it, [`TITLE_H`] for the big one.
-    title: u16,
-    spacing: u16,
+    shelf: Shelf,
+    /// 3 for a boxed status bar, 1 for a bare line.
     status: u16,
+    /// Blank lines between the parts.
+    gap: u16,
 }
 
 impl Plan {
     /// From the most to the least, each giving up one thing.
     const ALL: [Plan; 5] = [
         Plan {
-            title: TITLE_H,
-            spacing: 2,
+            shelf: Shelf::Cards { thumbs: true },
             status: 3,
+            gap: 1,
         },
         Plan {
-            title: 1,
-            spacing: 2,
+            shelf: Shelf::Cards { thumbs: false },
             status: 3,
+            gap: 1,
         },
         Plan {
-            title: 1,
-            spacing: 2,
-            status: 1,
+            shelf: Shelf::Tabs,
+            status: 3,
+            gap: 1,
         },
         Plan {
-            title: 1,
-            spacing: 1,
+            shelf: Shelf::Tabs,
             status: 1,
+            gap: 1,
         },
         Plan {
-            title: 0,
-            spacing: 1,
+            shelf: Shelf::Tabs,
             status: 1,
+            gap: 0,
         },
     ];
 
-    /// The title with the line under it and a gap before the menu.
-    fn title_h(self) -> u16 {
-        match self.title {
-            0 => 0,
-            TITLE_H => TITLE_H + 2,
-            _ => 2,
-        }
+    /// Header, shelf, body, status bar and footer, with the gaps between.
+    fn height(self, body: u16) -> u16 {
+        1 + self.gap + self.shelf.height() + self.gap + body + self.gap + self.status + 1
     }
+}
 
-    /// With room for the chosen item's box above and below it.
-    fn menu_h(self, slots: u16) -> u16 {
-        if self.spacing == 2 {
-            2 * slots + 1
-        } else {
-            slots
-        }
-    }
-
-    fn height(self, slots: u16) -> u16 {
-        self.title_h() + self.menu_h(slots) + self.status
-    }
+/// What the header says on the right: who is playing.
+fn who(lobby: &Lobby) -> String {
+    let guest = if lobby.guest { " (guest)" } else { "" };
+    format!("playing as {}{guest}", lobby.name)
 }
 
 impl LobbyGeometry {
@@ -148,92 +140,58 @@ impl LobbyGeometry {
         clippy::too_many_lines,
         reason = "the lobby's layout, worked out top to bottom"
     )]
-    pub fn new(area: Rect, rows: &[Row]) -> Self {
-        let [main, footer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-        let slots = slots(rows);
-        let n = cells(slots.len());
-        let title_w = title_width() + 1;
+    pub fn new(area: Rect, lobby: &Lobby) -> Self {
+        let rows = lobby.rows();
+        let clip = |r: Rect| r.intersection(area);
+        let line = |x: u16, y: u16, width: u16| clip(Rect::new(x, y, width, 1));
+
+        let content_w = area.width.saturating_sub(4).min(CONTENT_W);
+        let content_x = area.x + (area.width - content_w) / 2;
+        let two_columns = content_w >= TWO_COLUMNS;
+
+        let games = cells(Kind::ALL.len());
+        let card_w = (content_w.saturating_sub(CARD_GAP * (games - 1)) / games).min(CARD_W);
+        let friends = cells(rows.iter().filter(|r| matches!(r, Row::Friend(_))).count());
+        let actions_h = 1 + cells(Item::ALL.len());
+        let friends_h = 1 + friends.max(1);
+
+        let fits = |p: &Plan| {
+            let body = if two_columns {
+                actions_h.max(friends_h)
+            } else {
+                actions_h + p.gap + friends_h
+            };
+            let wide_enough = p.shelf == Shelf::Tabs || card_w >= CARD_MIN_W;
+            wide_enough && p.height(body) <= area.height
+        };
         let plan = Plan::ALL
             .into_iter()
-            .filter(|p| p.title != TITLE_H || main.width >= title_w + 2)
-            .find(|p| p.height(n) <= main.height)
+            .find(fits)
             .unwrap_or(Plan::ALL[Plan::ALL.len() - 1]);
-
-        // What is left goes to the floor, and then either side of the menu.
-        let spare = main.height.saturating_sub(plan.height(n));
-        let floor_h = if spare >= 6 {
-            (spare - 2).min(FLOOR_MAX)
+        let gap = plan.gap;
+        let body_h = if two_columns {
+            actions_h.max(friends_h)
         } else {
-            0
+            actions_h + gap + friends_h
         };
-        let rest = spare - floor_h;
-        let top = main.y + rest / 2;
 
-        let clip = |r: Rect| r.intersection(main);
-        // The big title is placed exactly; the one-line one spans the
-        // screen, to be centred on it.
-        let title = clip(if plan.title == TITLE_H {
-            Rect {
-                x: main.x + (main.width - title_w) / 2,
-                y: top,
-                width: title_w,
-                height: TITLE_H,
-            }
-        } else {
-            Rect {
-                x: main.x,
-                y: top,
-                width: main.width,
-                height: plan.title,
-            }
-        });
-        let tagline = (plan.title == TITLE_H).then(|| {
-            clip(Rect {
-                x: main.x,
-                y: top + TITLE_H,
-                width: main.width,
-                height: 1,
-            })
-        });
-        let menu_top = top + plan.title_h();
-        let menu_w = MENU_W.min(main.width);
-        let menu_x = main.x + (main.width - menu_w) / 2;
-        let line = |k: u16| {
-            let y = if plan.spacing == 2 {
-                menu_top + 1 + 2 * k
-            } else {
-                menu_top + k
-            };
-            clip(Rect {
-                x: menu_x,
-                y,
-                width: menu_w,
-                height: 1,
-            })
-        };
-        let mut placed = Vec::with_capacity(rows.len());
-        let mut friends_heading = None;
-        for (k, slot) in slots.iter().enumerate() {
-            let at = line(cells(k));
-            match slot {
-                Slot::Row(_) => placed.push(at),
-                Slot::FriendsHeading => friends_heading = Some(at),
-            }
-        }
-        let input = rows
-            .iter()
-            .position(|r| *r == Row::Item(Item::Join))
-            .and_then(|i| placed.get(i).copied())
-            .unwrap_or_default();
-
+        // Header and footer hug the edges, the status bar sits on the
+        // footer, and the shelf and body share what is between, centred.
+        let header = line(area.x, area.y, area.width);
+        let who_w = cells(who(lobby).chars().count()) + 1;
+        let name = line(
+            area.right().saturating_sub(who_w),
+            area.y,
+            who_w.min(area.width),
+        );
+        let footer = line(area.x, area.bottom().saturating_sub(1), area.width);
         let status = clip(Rect {
-            x: main.x,
-            y: main.bottom().saturating_sub(plan.status),
-            width: main.width,
+            x: area.x,
+            y: footer.y.saturating_sub(plan.status),
+            width: area.width,
             height: plan.status,
         });
-        let hint = if plan.status == 3 {
+        let input = if plan.status == 3 {
             clip(Rect {
                 x: status.x + 2,
                 y: status.y + 1,
@@ -243,26 +201,86 @@ impl LobbyGeometry {
         } else {
             status
         };
-        let floor = (floor_h > 0).then(|| {
-            clip(Rect {
-                x: main.x,
-                y: status.y.saturating_sub(floor_h),
-                width: main.width,
-                height: floor_h,
-            })
-        });
+        let top = area.y.saturating_add(1 + gap);
+        let room = status.y.saturating_sub(gap).saturating_sub(top);
+        let content_h = plan.shelf.height() + gap + body_h;
+        let shelf_y = top.saturating_add(room.saturating_sub(content_h) / 2);
+
+        let cards: Vec<Rect> = match plan.shelf {
+            Shelf::Cards { .. } => {
+                let across = card_w * games + CARD_GAP * (games - 1);
+                let x0 = content_x + (content_w - across.min(content_w)) / 2;
+                (0..games)
+                    .map(|i| {
+                        clip(Rect {
+                            x: x0.saturating_add(i * (card_w + CARD_GAP)),
+                            y: shelf_y,
+                            width: card_w,
+                            height: plan.shelf.height(),
+                        })
+                    })
+                    .collect()
+            }
+            Shelf::Tabs => {
+                // Each name with a space either side, and a bar between.
+                let widths: Vec<u16> = Kind::ALL
+                    .iter()
+                    .map(|k| cells(k.name().chars().count()) + 2)
+                    .collect();
+                let across = widths.iter().sum::<u16>() + (games - 1);
+                let mut x = area.x + area.width.saturating_sub(across) / 2;
+                widths
+                    .iter()
+                    .map(|&w| {
+                        let tab = line(x, shelf_y, w);
+                        x = x.saturating_add(w + 1);
+                        tab
+                    })
+                    .collect()
+            }
+        };
+
+        let body_y = shelf_y.saturating_add(plan.shelf.height() + gap);
+        let (left_w, right_x, right_w, friends_y) = if two_columns {
+            let left_w = (content_w - GUTTER) / 2;
+            let right_x = content_x + left_w + GUTTER;
+            (left_w, right_x, content_w - left_w - GUTTER, body_y)
+        } else {
+            let friends_y = body_y.saturating_add(actions_h + gap);
+            (content_w, content_x, content_w, friends_y)
+        };
+        let actions_heading = line(content_x, body_y, left_w);
+        let friends_heading = line(right_x, friends_y, right_w);
+        let friends_note = line(right_x, friends_y.saturating_add(1), right_w);
+        let mut placed = Vec::with_capacity(rows.len());
+        let (mut action, mut friend) = (0u16, 0u16);
+        for row in &rows {
+            placed.push(match row {
+                Row::Item(_) => {
+                    action += 1;
+                    line(content_x, body_y.saturating_add(action), left_w)
+                }
+                Row::Friend(_) => {
+                    friend += 1;
+                    line(right_x, friends_y.saturating_add(friend), right_w)
+                }
+            });
+        }
+        // Nothing may be clicked where the status bar or footer is drawn.
+        let floor = status.y;
+        let above = |r: Rect| if r.y < floor { r } else { Rect::default() };
 
         Self {
-            title,
-            big_title: plan.title == TITLE_H,
-            tagline,
-            rows: placed,
-            friends_heading,
-            spacing: plan.spacing,
-            input,
+            header,
+            name,
+            shelf: plan.shelf,
+            cards: cards.into_iter().map(above).collect(),
+            actions_heading: above(actions_heading),
+            friends_heading: above(friends_heading),
+            friends_note: above(friends_note),
+            rows: placed.into_iter().map(above).collect(),
             status,
-            hint,
-            floor,
+            input,
             footer,
         }
     }
@@ -272,65 +290,60 @@ impl LobbyGeometry {
     pub fn row_at(&self, x: u16, y: u16) -> Option<usize> {
         self.rows.iter().position(|r| r.contains(Position { x, y }))
     }
+
+    /// The game whose card or tab is under a screen position, if any.
+    #[must_use]
+    pub fn card_at(&self, x: u16, y: u16) -> Option<usize> {
+        self.cards
+            .iter()
+            .position(|r| r.contains(Position { x, y }))
+    }
 }
 
 pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
     let rows = lobby.rows();
-    let g = LobbyGeometry::new(f.area(), &rows);
-    let muted = Style::default().fg(MUTED);
+    let g = LobbyGeometry::new(f.area(), lobby);
 
     // Scenery first, so everything else is drawn over it.
-    if let Some(floor) = g.floor {
-        draw_floor(f.buffer_mut(), floor);
-    }
-    let screen = f.area();
-    draw_stars(f.buffer_mut(), screen, &g);
+    draw_stars(f.buffer_mut(), &g);
+    draw_header(f, &g, lobby);
+    draw_shelf(f, &g, lobby);
 
-    draw_title(f, &g);
-
-    if let Some(area) = g.friends_heading {
+    let game = lobby.game();
+    f.render_widget(
+        Paragraph::new(heading(
+            &format!("Play {}", game.name()),
+            g.actions_heading.width,
+        )),
+        g.actions_heading,
+    );
+    f.render_widget(
+        Paragraph::new(heading("Challenge a friend", g.friends_heading.width)),
+        g.friends_heading,
+    );
+    if lobby.friends.is_empty() {
         f.render_widget(
-            Paragraph::new(Line::styled("─── friends ───", muted).centered()),
-            area,
+            Paragraph::new(Line::styled(
+                "  anyone you play turns up here",
+                Style::default().fg(MUTED),
+            )),
+            g.friends_note,
         );
     }
 
     for (i, (&row, &area)) in rows.iter().zip(&g.rows).enumerate() {
-        let chosen = i == lobby.selected;
-        let editing = chosen && lobby.editing.is_some();
-        if chosen && g.spacing == 2 {
-            let border = if editing { CURSOR } else { QUIET };
-            let boxed = Rect {
-                y: area.y.saturating_sub(1),
-                height: 3,
-                ..area
-            }
-            .intersection(f.area());
-            f.render_widget(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border)),
-                boxed,
-            );
-        } else if chosen {
+        let chosen = i == lobby.selected && lobby.editing.is_none();
+        if chosen {
             f.render_widget(Block::default().style(Style::default().bg(HIGHLIGHT)), area);
         }
-        let inner = Rect {
-            x: area.x + 2,
-            width: area.width.saturating_sub(4),
-            ..area
-        };
-        if editing {
-            let (line, cursor) = edit_line(lobby);
-            f.render_widget(Paragraph::new(line), inner);
-            set_cursor(f, inner, cursor);
-        } else {
-            f.render_widget(Paragraph::new(row_line(lobby, row, chosen)), inner);
-        }
+        f.render_widget(
+            Paragraph::new(row_line(lobby, row, chosen, area.width)),
+            area,
+        );
     }
 
     draw_status(f, &g, lobby, &rows);
-    draw_footer(f, g.footer, lobby, &rows);
+    draw_footer(f, g.footer, lobby);
 
     if let Some(invite) = &lobby.invite {
         let area = centred(f.area(), 44, 6);
@@ -357,42 +370,149 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
     }
 }
 
-/// What a row says, centred in the menu.
-fn row_line(lobby: &Lobby, row: Row, chosen: bool) -> Line<'static> {
+/// A heading over a column: its words, and a rule to the column's edge.
+fn heading(text: &str, width: u16) -> Line<'static> {
+    let rule = Style::default().fg(MUTED);
+    let used = text.chars().count() + 4;
+    Line::from(vec![
+        Span::styled("── ", rule),
+        Span::styled(
+            text.to_string(),
+            Style::default().fg(QUIET).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {}", "─".repeat(usize::from(width).saturating_sub(used))),
+            rule,
+        ),
+    ])
+}
+
+fn draw_header(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby) {
+    let title = Line::from(vec![
+        Span::styled(
+            " tui-tui",
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(MUTED),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(title), g.header);
+
+    let muted = Style::default().fg(MUTED);
+    if lobby.editing == Some(Field::Name) {
+        // Room for the longest name, typed in place of the old one.
+        let prompt = "name › ";
+        let w = cells(prompt.chars().count() + NAME_MAX + 2);
+        let area = Rect {
+            x: g.header.right().saturating_sub(w),
+            width: w.min(g.header.width),
+            ..g.header
+        };
+        f.render_widget(Clear, area);
+        let line = Line::from(vec![
+            Span::styled(prompt, Style::default().fg(CURSOR)),
+            Span::styled(lobby.name_input.clone(), Style::default().fg(BRIGHT)),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+        let at = prompt.chars().count() + lobby.name_input.chars().count();
+        set_cursor(f, area, at);
+        return;
+    }
+    if lobby.name.is_empty() {
+        return;
+    }
+    let guest = if lobby.guest { " (guest)" } else { "" };
+    let line = Line::from(vec![
+        Span::styled("playing as ", muted),
+        Span::styled(lobby.name.clone(), Style::default().fg(QUIET)),
+        Span::styled(format!("{guest} "), muted),
+    ]);
+    f.render_widget(Paragraph::new(line.right_aligned()), g.name);
+}
+
+fn draw_shelf(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby) {
+    for (i, (&kind, &area)) in Kind::ALL.iter().zip(&g.cards).enumerate() {
+        let chosen = i == lobby.game % Kind::ALL.len();
+        let name = if chosen {
+            Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(QUIET)
+        };
+        let Shelf::Cards { thumbs } = g.shelf else {
+            let style = if chosen {
+                name.bg(HIGHLIGHT).fg(CURSOR)
+            } else {
+                name
+            };
+            f.render_widget(
+                Paragraph::new(Line::styled(kind.name(), style).centered()).style(style),
+                area,
+            );
+            continue;
+        };
+
+        let (border, kind_of) = if chosen {
+            (CURSOR, BorderType::Thick)
+        } else {
+            (MUTED, BorderType::Rounded)
+        };
+        let block = Block::bordered()
+            .border_type(kind_of)
+            .border_style(Style::default().fg(border));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let mut y = inner.y;
+        if thumbs {
+            let pic = Rect {
+                height: THUMB_H.min(inner.height),
+                ..inner
+            };
+            kind.thumb(f.buffer_mut(), pic);
+            y = y.saturating_add(THUMB_H);
+        }
+        let text = vec![
+            Line::styled(kind.name(), name).centered(),
+            Line::styled(kind.blurb(), Style::default().fg(MUTED)).centered(),
+        ];
+        let words = Rect {
+            y,
+            height: 2,
+            ..inner
+        }
+        .intersection(inner);
+        f.render_widget(Paragraph::new(text), words);
+    }
+    // Between the tabs.
+    if g.shelf == Shelf::Tabs {
+        for pair in g.cards.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if a.right() < b.x {
+                let at = Position::new(a.right(), a.y);
+                if f.area().contains(at) {
+                    f.buffer_mut()[at].set_symbol("│").set_fg(MUTED);
+                }
+            }
+        }
+    }
+}
+
+/// What a row says: a marker if it is chosen, and the words.
+fn row_line(lobby: &Lobby, row: Row, chosen: bool, width: u16) -> Line<'static> {
     let muted = Style::default().fg(MUTED);
     let label = if chosen {
         Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(QUIET)
     };
-    let spans = match row {
-        Row::Item(Item::Game) => {
-            // The arrows say it can be changed, once there is a choice.
-            let arrows = if Kind::ALL.len() > 1 && chosen {
-                Style::default().fg(CURSOR)
-            } else {
-                muted
-            };
-            vec![
-                Span::styled("Game  ", muted),
-                Span::styled("‹ ", arrows),
-                Span::styled(lobby.game().name(), label),
-                Span::styled(" ›", arrows),
-            ]
-        }
-        Row::Item(Item::Join) => vec![Span::styled("Join with a code", label)],
-        Row::Item(Item::Name) => {
-            let mut spans = vec![
-                Span::styled("Name  ", muted),
-                Span::styled(lobby.name.clone(), label),
-            ];
-            if lobby.guest {
-                spans.push(Span::styled(" (guest)", muted));
-            }
-            spans
-        }
-        Row::Item(Item::Local) if lobby.game().alone() => vec![Span::styled("Play alone", label)],
-        Row::Item(item) => vec![Span::styled(item.label(), label)],
+    let marker = if chosen {
+        Span::styled(" ▸ ", Style::default().fg(CURSOR))
+    } else {
+        Span::raw("   ")
+    };
+    match row {
+        Row::Item(item) => Line::from(vec![marker, Span::styled(item.label(), label)]),
         Row::Friend(n) => {
             let Some(friend) = lobby.friends.get(n) else {
                 return Line::raw("");
@@ -401,53 +521,74 @@ fn row_line(lobby: &Lobby, row: Row, chosen: bool) -> Line<'static> {
                 1 => "1 game".to_string(),
                 n => format!("{n} games"),
             };
-            let name: String = friend.name.chars().take(16).collect();
-            vec![
+            let about = format!("{games} · {} ", ago(friend.last_played));
+            // The name takes what the numbers leave, the numbers going
+            // first if there is not even room for a name.
+            let about_w = about.chars().count();
+            let room = usize::from(width).saturating_sub(3);
+            let (about, name_w) = if room >= about_w + 6 {
+                (about, room - about_w - 1)
+            } else {
+                (String::new(), room)
+            };
+            let name: String = friend.name.chars().take(name_w.min(20)).collect();
+            let pad = room
+                .saturating_sub(name.chars().count())
+                .saturating_sub(about.chars().count());
+            Line::from(vec![
+                marker,
                 Span::styled(name, label),
-                Span::styled(format!("  {games} · {}", ago(friend.last_played)), muted),
-            ]
-        }
-    };
-    Line::from(spans).centered()
-}
-
-/// The row being typed into, and how far along it the cursor sits.
-fn edit_line(lobby: &Lobby) -> (Line<'static>, usize) {
-    let muted = Style::default().fg(MUTED);
-    let prompt = Span::styled("› ", Style::default().fg(CURSOR));
-    let typed = Style::default().fg(BRIGHT);
-    match lobby.editing {
-        Some(Field::Name) => {
-            let text = lobby.name_input.clone();
-            let at = 2 + text.chars().count();
-            (Line::from(vec![prompt, Span::styled(text, typed)]), at)
-        }
-        _ if lobby.input.is_empty() => (
-            Line::from(vec![prompt, Span::styled("42-tiger-marble-ocean", muted)]),
-            2,
-        ),
-        _ => {
-            // The rest of the word Tab would fill in, greyed out after the
-            // cursor.
-            let ghost = lobby.completion().map_or("", |word| {
-                let typed = lobby.input.rsplit('-').next().map_or(0, str::len);
-                &word[typed..]
-            });
-            let at = 2 + lobby.input.len();
-            (
-                Line::from(vec![
-                    prompt,
-                    Span::styled(lobby.input.clone(), typed),
-                    Span::styled(ghost, muted),
-                ]),
-                at,
-            )
+                Span::raw(" ".repeat(pad)),
+                Span::styled(about, muted),
+            ])
         }
     }
 }
 
-/// What the chosen row does, or how typing is going, or whatever the lobby
-/// has to say.
+/// The code being typed, and how far along it the cursor sits.
+fn code_line(lobby: &Lobby) -> (Line<'static>, usize) {
+    let muted = Style::default().fg(MUTED);
+    let prompt = Span::styled("code › ", Style::default().fg(CURSOR));
+    let start = 7;
+    if lobby.input.is_empty() {
+        return (
+            Line::from(vec![prompt, Span::styled("42-tiger-marble-ocean", muted)]),
+            start,
+        );
+    }
+    // The rest of the word Tab would fill in, greyed out after the cursor.
+    let ghost = lobby.completion().map_or("", |word| {
+        let typed = lobby.input.rsplit('-').next().map_or(0, str::len);
+        &word[typed..]
+    });
+    (
+        Line::from(vec![
+            prompt,
+            Span::styled(lobby.input.clone(), Style::default().fg(BRIGHT)),
+            Span::styled(ghost, muted),
+        ]),
+        start + lobby.input.len(),
+    )
+}
+
+/// How the code is looking, beside it.
+fn code_verdict(lobby: &Lobby) -> Line<'static> {
+    let muted = Style::default().fg(QUIET);
+    match lobby.entry() {
+        Entry::Empty => Line::styled("type or paste the code you were sent", muted),
+        Entry::Typing if lobby.completion().is_some() => {
+            Line::styled("tab finishes the word", muted)
+        }
+        Entry::Typing => Line::styled("a number and three words", muted),
+        Entry::Ready(_) => Line::styled(
+            "that's a code — enter to join",
+            Style::default().fg(SELECTED),
+        ),
+        Entry::Bad(why) => Line::styled(why, Style::default().fg(CAPTURE)),
+    }
+}
+
+/// What the chosen row does, or whatever the lobby has to say.
 fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
     let muted = Style::default().fg(QUIET);
     if let Some(i) = lobby.forgetting {
@@ -457,53 +598,27 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
             Style::default().fg(CAPTURE),
         );
     }
-    match lobby.editing {
-        Some(Field::Name) => {
-            return Line::styled("what friends will see you as — enter saves", muted);
-        }
-        Some(Field::Code) => {
-            return match lobby.entry() {
-                Entry::Empty => Line::styled("type or paste the code you were sent", muted),
-                Entry::Typing if lobby.completion().is_some() => {
-                    Line::styled("tab finishes the word", muted)
-                }
-                Entry::Typing => Line::styled("a number and three words", muted),
-                Entry::Ready(_) => Line::styled(
-                    "that's a code — enter to join",
-                    Style::default().fg(SELECTED),
-                ),
-                Entry::Bad(why) => Line::styled(why, Style::default().fg(CAPTURE)),
-            };
-        }
-        None => {}
+    if lobby.editing == Some(Field::Name) {
+        return Line::styled("what friends will see you as — enter saves", muted);
     }
     if let Some(notice) = &lobby.notice {
         return Line::styled(notice.clone(), Style::default().fg(CURSOR));
     }
+    if lobby.guest {
+        return Line::styled(
+            "a guest: another copy of tuitui has your profile open",
+            muted,
+        );
+    }
     let game = lobby.game().name().to_lowercase();
     let text = match rows.get(lobby.selected) {
-        Some(Row::Item(Item::Game)) if Kind::ALL.len() > 1 => {
-            "what hosting, joining or a challenge will play — ←/→ to change".into()
-        }
-        Some(Row::Item(Item::Game)) => format!("{game} is the game on the table"),
         Some(Row::Item(Item::Host)) => {
-            "get a code to send your opponent, then wait for them here".into()
-        }
-        Some(Row::Item(Item::Join)) => {
-            "type in the code your opponent sent — or just start typing it".into()
+            format!("get a code to send your opponent, then wait here to play {game}")
         }
         Some(Row::Item(Item::Local)) if lobby.game().alone() => {
             format!("a game of {game} on your own")
         }
-        Some(Row::Item(Item::Local)) => "two players taking turns at this keyboard".into(),
-        Some(Row::Item(Item::Name)) if lobby.guest => {
-            "a guest: another copy of tuitui has your profile open".into()
-        }
-        Some(Row::Item(Item::Name)) if lobby.friends.is_empty() => {
-            "what friends see — anyone you play turns up as a friend".into()
-        }
-        Some(Row::Item(Item::Name)) => "what friends see".into(),
-        Some(Row::Item(Item::Quit)) => "see you next time".into(),
+        Some(Row::Item(Item::Local)) => format!("two players taking turns at {game} here"),
         Some(Row::Friend(n)) => {
             let name = lobby.friends.get(*n).map_or("them", |f| f.name.as_str());
             format!("challenge {name} to a game of {game}")
@@ -514,262 +629,112 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
 }
 
 fn draw_status(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby, rows: &[Row]) {
-    let line = status_line(lobby, rows);
     if g.status.height >= 3 {
         f.render_widget(Clear, g.status);
+        let border = if lobby.editing == Some(Field::Code) {
+            CURSOR
+        } else {
+            MUTED
+        };
         f.render_widget(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(MUTED)),
+                .border_style(Style::default().fg(border)),
             g.status,
         );
-        f.render_widget(Paragraph::new(line), g.hint);
-    } else {
-        f.render_widget(Paragraph::new(line.centered()), g.hint);
     }
+    if lobby.editing != Some(Field::Code) {
+        let line = status_line(lobby, rows);
+        let line = if g.status.height >= 3 {
+            line
+        } else {
+            line.centered()
+        };
+        f.render_widget(Paragraph::new(line), g.input);
+        return;
+    }
+    let (line, cursor) = code_line(lobby);
+    let verdict = code_verdict(lobby);
+    // How it is going goes at the far end, when there is room for both.
+    if usize::from(g.input.width) >= line.width() + verdict.width() + 2 {
+        f.render_widget(Paragraph::new(verdict.right_aligned()), g.input);
+    }
+    f.render_widget(Paragraph::new(line), g.input);
+    set_cursor(f, g.input, cursor);
 }
 
-fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby, rows: &[Row]) {
-    let on_friend = matches!(rows.get(lobby.selected), Some(Row::Friend(_)));
-    let keys: &[(&str, &str)] = if lobby.invite.is_some() {
-        &[("y", "accept"), ("n", "decline")]
+fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby) {
+    let tab = if lobby.on_friend().is_some() {
+        ("tab", "actions")
+    } else {
+        ("tab", "friends")
+    };
+    let mut keys: Vec<(&str, &str)> = if lobby.invite.is_some() {
+        vec![("y", "accept"), ("n", "decline")]
     } else if lobby.editing == Some(Field::Code) {
-        &[
+        vec![
             ("enter", "join"),
             ("tab", "complete"),
             ("ctrl-u", "clear"),
             ("esc", "back"),
         ]
     } else if lobby.editing == Some(Field::Name) {
-        &[("enter", "save"), ("esc", "cancel")]
-    } else if lobby.on_game() && Kind::ALL.len() > 1 {
-        &[("←/→", "change game"), ("↑/↓", "select"), ("q", "quit")]
-    } else if on_friend {
-        &[
+        vec![("enter", "save"), ("esc", "cancel")]
+    } else if lobby.on_friend().is_some() {
+        vec![
             ("enter", "challenge"),
+            ("←/→", "game"),
+            ("0-9", "join"),
+            tab,
             ("x", "forget"),
-            ("↑/↓", "select"),
+            ("n", "rename"),
             ("q", "quit"),
         ]
     } else {
-        &[("↑/↓", "select"), ("enter", "confirm"), ("q", "quit")]
+        let mut keys = vec![("enter", "play"), ("←/→", "game"), ("0-9", "join")];
+        if !lobby.friends.is_empty() {
+            keys.push(tab);
+        }
+        keys.extend([("n", "rename"), ("↑/↓", "select"), ("q", "quit")]);
+        keys
     };
-
-    // As many keys as fit, the most useful first.
-    let who = if lobby.name.is_empty() {
-        None
-    } else {
-        Some(format!("playing as {} ", lobby.name))
-    };
-    let who_w = who.as_ref().map_or(0, |w| cells(w.chars().count()) + 2);
-    let mut left = vec![Span::raw(" ")];
-    left.extend(keycaps_fit(keys, area.width.saturating_sub(who_w + 1)));
-    let used = cells(Line::from(left.clone()).width());
-    f.render_widget(Paragraph::new(Line::from(left)), area);
-    if let Some(who) = who
-        && used + who_w <= area.width
-    {
-        f.render_widget(
-            Paragraph::new(Line::styled(who, Style::default().fg(MUTED)).right_aligned()),
-            area,
-        );
+    if Kind::ALL.len() < 2 {
+        keys.retain(|&(k, _)| k != "←/→");
     }
+    let mut line = vec![Span::raw(" ")];
+    line.extend(keycaps_fit(&keys, area.width.saturating_sub(1)));
+    f.render_widget(Paragraph::new(Line::from(line)), area);
 }
 
-/// The title's letters on a grid of square pixels, two to a cell stacked
-/// one above the other: `#` is ink.
-fn glyph(c: char) -> &'static [&'static str] {
-    match c {
-        'T' => &[
-            "########", "########", "...##...", "...##...", "...##...", "...##...", "...##...",
-            "...##...", "...##...", "...##...",
-        ],
-        'U' => &[
-            "##....##", "##....##", "##....##", "##....##", "##....##", "##....##", "##....##",
-            "##....##", ".######.", ".######.",
-        ],
-        'I' => &[
-            "######", "######", "..##..", "..##..", "..##..", "..##..", "..##..", "..##..",
-            "######", "######",
-        ],
-        '-' => &[
-            ".....", ".....", ".....", ".....", "#####", "#####", ".....", ".....", ".....",
-            ".....",
-        ],
-        _ => &[],
-    }
-}
-
-/// Pixels between letters.
-const LETTER_GAP: u16 = 2;
-
-fn title_width() -> u16 {
-    let letters: u16 = TITLE
-        .chars()
-        .map(|c| glyph(c).first().map_or(0, |r| cells(r.len())))
-        .sum();
-    letters + LETTER_GAP * (cells(TITLE.chars().count()) - 1)
-}
-
-/// Every inked pixel of the title, from its top left.
-fn title_pixels() -> Vec<(u16, u16)> {
-    let mut out = Vec::new();
-    let mut x = 0;
-    for c in TITLE.chars() {
-        let rows = glyph(c);
-        for (y, row) in rows.iter().enumerate() {
-            for (dx, p) in row.chars().enumerate() {
-                if p == '#' {
-                    out.push((x + cells(dx), cells(y)));
-                }
-            }
-        }
-        x += rows.first().map_or(0, |r| cells(r.len())) + LETTER_GAP;
-    }
-    out
-}
-
-#[expect(
-    clippy::many_single_char_names,
-    reason = "screen geometry, named as it is everywhere else here"
-)]
-fn draw_title(f: &mut Frame, g: &LobbyGeometry) {
-    let version = format!("terminal games for two · v{}", env!("CARGO_PKG_VERSION"));
-    if !g.big_title {
-        let line = Line::from(vec![
-            Span::styled(
-                "tui-tui",
-                Style::default().fg(INK).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  v{}", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(MUTED),
-            ),
-        ]);
-        f.render_widget(Paragraph::new(line.centered()), g.title);
-        return;
-    }
-
-    // Paint the shadow a pixel down and to the right, then the ink over it.
-    let (w, h) = (usize::from(g.title.width), usize::from(g.title.height) * 2);
-    let mut pixels: Vec<Option<Color>> = vec![None; w * h];
-    let inked = title_pixels();
-    for (offset, colour) in [(1, SHADOW), (0, INK)] {
-        for &(x, y) in &inked {
-            let (x, y) = (usize::from(x + offset), usize::from(y + offset));
-            if x < w && y < h {
-                pixels[y * w + x] = Some(colour);
-            }
-        }
-    }
-    let buf = f.buffer_mut();
-    for row in 0..g.title.height {
-        for col in 0..g.title.width {
-            let (x, y) = (usize::from(col), usize::from(row) * 2);
-            let cell = &mut buf[(g.title.x + col, g.title.y + row)];
-            match (pixels[y * w + x], pixels[(y + 1) * w + x]) {
-                (None, None) => {}
-                (Some(top), Some(bottom)) if top == bottom => {
-                    cell.set_symbol("█").set_fg(top);
-                }
-                (Some(top), bottom) => {
-                    cell.set_symbol("▀").set_fg(top);
-                    if let Some(bottom) = bottom {
-                        cell.set_bg(bottom);
-                    }
-                }
-                (None, Some(bottom)) => {
-                    cell.set_symbol("▄").set_fg(bottom);
-                }
-            }
-        }
-    }
-    if let Some(area) = g.tagline {
-        f.render_widget(
-            Paragraph::new(Line::styled(version, Style::default().fg(MUTED)).centered()),
-            area,
-        );
-    }
-}
-
-/// A chessboard seen from just above it, running off to a dark horizon. Each
-/// cell is two pixels stacked, the top in the foreground of a `▀` and the
-/// bottom in its background.
-fn draw_floor(buf: &mut Buffer, area: Rect) {
-    const SAMPLES: u16 = 4;
-    let depth = f64::from(area.height * 2);
-    let centre = f64::from(area.width) / 2.0;
-    // Squares at the front are this many cells across.
-    let near = 12.0;
-    let camera = depth / near;
-    let focal = 2.0 * depth;
-    // How much of a pixel is light square, sampled on a grid within it so
-    // the far squares blur together rather than shimmer.
-    let light_share = |px: u16, py: u16| {
-        let mut light = 0u16;
-        for sy in 0..SAMPLES {
-            for sx in 0..SAMPLES {
-                // How far below the horizon, which is how close to us.
-                let d = f64::from(py) + (f64::from(sy) + 0.5) / f64::from(SAMPLES);
-                let x = f64::from(px) + (f64::from(sx) + 0.5) / f64::from(SAMPLES);
-                let wx = (x - centre) * camera / d;
-                let wz = camera * focal / d;
-                if (wx.floor() + wz.floor()).rem_euclid(2.0) < 1.0 {
-                    light += 1;
-                }
-            }
-        }
-        f32::from(light) / f32::from(SAMPLES * SAMPLES)
-    };
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "fractions from 0 to 1, which need no more than f32"
-    )]
-    let pixel = |px: u16, py: u16| {
-        let square = blend(FLOOR_DARK, FLOOR_LIGHT, light_share(px, py));
-        // Fading into the dark at the horizon and towards either side, and
-        // never as bright as the board itself.
-        let near = ((f64::from(py) + 0.5) / depth) as f32;
-        let side = ((f64::from(px) + 0.5 - centre) / centre).abs() as f32;
-        let alpha = near.powf(1.6) * 0.55 * (1.0 - 0.7 * side.powi(2));
-        blend(NIGHT, square, alpha)
-    };
-    for row in 0..area.height {
-        for col in 0..area.width {
-            let at = Position::new(area.x + col, area.y + row);
-            buf[at]
-                .set_symbol("▀")
-                .set_fg(pixel(col, 2 * row))
-                .set_bg(pixel(col, 2 * row + 1));
-        }
-    }
-}
-
-/// A scattering of stars in the sky, clear of the title, the menu and the
-/// floor. Where they fall depends only on the screen position, so they stay
-/// put from one frame to the next.
-fn draw_stars(buf: &mut Buffer, area: Rect, g: &LobbyGeometry) {
-    let sky_bottom = g.floor.map_or(g.status.y, |f| f.y);
-    let menu = g
-        .rows
+/// A scattering of stars in the sky between the header and the status bar,
+/// clear of the shelf and the columns. Where they fall depends only on the
+/// screen position, so they stay put from one frame to the next.
+fn draw_stars(buf: &mut Buffer, g: &LobbyGeometry) {
+    let content = g
+        .cards
         .iter()
-        .chain(&g.friends_heading)
-        .fold(g.title, |acc, r| acc.union(*r));
+        .chain(&g.rows)
+        .chain([&g.actions_heading, &g.friends_heading, &g.friends_note])
+        .filter(|r| !r.is_empty())
+        .copied()
+        .reduce(Rect::union);
     // A margin round what is written, so no star crowds it.
-    let keep_clear = Rect {
-        x: menu.x.saturating_sub(4),
-        y: menu.y.saturating_sub(1),
-        width: menu.width + 8,
-        height: menu.height + 3,
-    };
-    for y in area.y..sky_bottom.min(area.bottom()) {
-        for x in area.x..area.right() {
+    let keep_clear = content.map(|c| Rect {
+        x: c.x.saturating_sub(4),
+        y: c.y.saturating_sub(1),
+        width: c.width.saturating_add(8),
+        height: c.height.saturating_add(3),
+    });
+    let area = buf.area;
+    let top = g.header.bottom().max(area.y);
+    let bottom = g.status.y.min(area.bottom());
+    for y in top..bottom {
+        for x in area.left()..area.right() {
             let at = Position::new(x, y);
-            if keep_clear.contains(at) {
+            if keep_clear.is_some_and(|k| k.contains(at)) {
                 continue;
             }
-            let h = hash(x, y);
-            let (symbol, colour) = match h % 97 {
+            let (symbol, colour) = match hash(x, y) % 97 {
                 0 => ("✦", CURSOR),
                 1 | 2 => ("·", QUIET),
                 3 => ("·", MUTED),

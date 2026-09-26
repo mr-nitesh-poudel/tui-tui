@@ -25,8 +25,10 @@ use super::{Ctx, Descriptor, Handled, Kind, Play, Seat, Table};
 
 pub const DESCRIPTOR: Descriptor = Descriptor {
     name: "Chess",
+    blurb: "two players, one board",
     wire: GAME,
     alone: false,
+    thumb: ui::thumb,
     start,
 };
 

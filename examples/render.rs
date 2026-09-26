@@ -86,6 +86,10 @@ fn sprites(app: &Table<App>, w: u16, h: u16, squares: &[Square]) {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one screen after another, in the order they are printed"
+)]
 fn main() {
     let mut app = Table::local(App::local());
     for m in [
@@ -164,8 +168,16 @@ fn main() {
         friend("bob", 1, now - 30 * 3600),
         friend("a very long name indeed, really", 12, now - 20 * 86400),
     ]);
-    lobby.selected = 4;
+    lobby.selected = 2;
     dump_lobby("lobby with friends", &lobby, 80, 30);
+    lobby.game = 1;
+    lobby.selected = 1;
+    dump_lobby("lobby on wordle", &lobby, 100, 36);
+    dump_lobby("lobby, classic 80x24", &lobby, 80, 24);
+    dump_lobby("lobby, narrow", &lobby, 50, 24);
+    dump_lobby("lobby, short", &lobby, 80, 14);
+    dump_lobby("lobby, tiny", &lobby, 36, 10);
+    lobby.game = 0;
     lobby.invite = Some(Invited {
         name: "alice".into(),
         game: tui_tui::games::chess::KIND,
@@ -175,7 +187,7 @@ fn main() {
 
     lobby.set_friends(vec![]);
     lobby.editing = Some(Field::Code);
-    lobby.selected = 2;
+    lobby.selected = 0;
     lobby.input = "42-tiger-mar".into();
     dump_lobby("lobby, typing a code", &lobby, 80, 24);
     lobby.input = "42-tiger-xylo".into();
