@@ -391,6 +391,7 @@ fn row_line(lobby: &Lobby, row: Row, chosen: bool) -> Line<'static> {
             }
             spans
         }
+        Row::Item(Item::Local) if lobby.game().alone() => vec![Span::styled("Play alone", label)],
         Row::Item(item) => vec![Span::styled(item.label(), label)],
         Row::Friend(n) => {
             let Some(friend) = lobby.friends.get(n) else {
@@ -490,6 +491,9 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
         }
         Some(Row::Item(Item::Join)) => {
             "type in the code your opponent sent — or just start typing it".into()
+        }
+        Some(Row::Item(Item::Local)) if lobby.game().alone() => {
+            format!("a game of {game} on your own")
         }
         Some(Row::Item(Item::Local)) => "two players taking turns at this keyboard".into(),
         Some(Row::Item(Item::Name)) if lobby.guest => {

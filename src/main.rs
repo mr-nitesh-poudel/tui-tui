@@ -3,7 +3,7 @@
 //! ```text
 //! tuitui                 the lobby: pick a game, host, join, challenge a friend
 //! tuitui play [game]     the same, on the game named
-//! tuitui local [game]    two players, one keyboard
+//! tuitui local [game]    two players, one keyboard (or one, for wordle)
 //! tuitui host [game]     wait for an opponent, and go first
 //! tuitui join <code>     join with an opponent's code
 //! ```
@@ -34,7 +34,8 @@ usage:
   tuitui                  open the lobby: pick a game, host, join, or
                           challenge a friend
   tuitui play [game]      the same, starting on the game named
-  tuitui local [game]     play locally, two players on one keyboard
+  tuitui local [game]     play locally: two players on one keyboard,
+                          or on your own for a game like wordle
   tuitui host [game]      host a game and get a code to share
   tuitui join <code>      join a game with the code your opponent sent,
                           e.g. tuitui join 42-tiger-marble-ocean

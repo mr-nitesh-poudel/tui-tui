@@ -27,7 +27,9 @@
 //!   otherwise exactly as sent: possibly malformed, out of turn, or hostile.
 //!   There is no referee, so the game checks every one against its own state
 //!   and ignores whatever does not fit. Nothing a peer sends may panic it.
-//! - Its own lines go out through [`Ctx::send`].
+//! - Its own lines go out through [`Ctx::send`], which drops them until
+//!   there is an opponent. [`Play::on_connect`] says when one arrives, before
+//!   any of their lines, and [`Play::on_disconnect`] when they go.
 //! - Work it does in the background calls [`Ctx::waker`] when it has
 //!   something new to show, and the screen is drawn again. Lines starting with the
 //!   word `chat` are the table's: it takes them before the game sees them, so
@@ -44,6 +46,7 @@ pub mod chess;
 pub mod chrome;
 mod play;
 mod table;
+pub mod wordle;
 
 pub use play::{Handled, Play};
 pub use table::{Conn, Ctx, Leave, Table, Waker};
@@ -58,6 +61,9 @@ pub struct Descriptor {
     /// What the two sides agree on when pairing. Bump the version whenever
     /// the game's messages change in a way an older build would misread.
     pub wire: session::Game,
+    /// Played by one player at [`Seat::Local`], rather than two sharing the
+    /// keyboard.
+    pub alone: bool,
     /// A new game, sat at `seat`, at a table with this connection.
     pub start: fn(Seat, Ctx) -> Box<Table<dyn Play>>,
 }
@@ -69,7 +75,7 @@ pub struct Kind(&'static Descriptor);
 impl Kind {
     /// Every game this build can play, in the order the lobby offers them.
     /// The first is the default.
-    pub const ALL: &'static [Kind] = &[chess::KIND];
+    pub const ALL: &'static [Kind] = &[chess::KIND, wordle::KIND];
 
     /// The game played when none is named. Evaluated when the program is
     /// built, so an empty [`Kind::ALL`] fails to compile rather than panics.
@@ -83,6 +89,13 @@ impl Kind {
     #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name
+    }
+
+    /// Whether playing locally is one player on their own, rather than two
+    /// taking turns.
+    #[must_use]
+    pub fn alone(self) -> bool {
+        self.0.alone
     }
 
     /// The name and protocol version the two sides agree on when pairing.
@@ -136,7 +149,8 @@ impl std::fmt::Debug for Kind {
 /// Where a player sits, which decides who goes first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seat {
-    /// Both players at this keyboard.
+    /// Both players at this keyboard, or the one player of a game played
+    /// [`alone`](Kind::alone).
     Local,
     /// The one who hosted, or was invited.
     Host,

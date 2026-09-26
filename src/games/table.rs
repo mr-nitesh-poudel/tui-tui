@@ -240,11 +240,13 @@ impl<G: Play + ?Sized> Table<G> {
     /// The opponent is in.
     pub fn attach(&mut self, net: Net, name: &str) {
         self.ctx.attach(net, name);
+        self.play.on_connect(&mut self.ctx);
     }
 
     /// The connection could not be made, or went.
     pub fn lost(&mut self, why: String) {
         self.ctx.conn = Conn::Lost(why);
+        self.play.on_disconnect(&mut self.ctx);
     }
 
     pub fn draw(&self, f: &mut Frame) {

@@ -4,8 +4,9 @@ Two people, two terminals, one game. No server, no account, no port forwarding.
 
 You read out a code like `42-tiger-marble-ocean`, your friend types it in, and
 you are playing. The code is not an address on somebody's server — it *is* the
-address, stretched into a keypair and looked up on a public DHT. Chess is the
-first game; the lobby, pairing and friends are shared, so more can follow.
+address, stretched into a keypair and looked up on a public DHT. Play chess,
+or race each other to the same Wordle; the lobby, pairing and friends are
+shared, so more can follow.
 
 ![two players, one keyboard, and a fool's mate](demo.gif)
 
@@ -54,11 +55,12 @@ tuitui                            # the lobby
 tuitui host                       # or skip it: host a game,
 tuitui join 42-tiger-marble-ocean # join one,
 tuitui local                      # or share a keyboard
-tuitui play chess                 # the lobby, on a game of your choosing
+tuitui play wordle                # the lobby, on a game of your choosing
+tuitui local wordle               # wordle on your own
 ```
 
 Every command but `join` takes an optional game. Joining never needs one: you
-get whatever the host is playing. Host plays white.
+get whatever the host is playing. In chess, the host plays white.
 
 Codes are forgiving. Any case, spaces instead of dashes, and four letters a
 word is plenty — `42 tige marb ocea` gets you there. Tab finishes a word, and
@@ -109,6 +111,35 @@ it's unpacked, and kept in tuitui's data folder with its licence.
 An engine is advice, so it isn't available during a game against someone
 else, only once it's over. Hot-seat can use it any time.
 
+## Wordle
+
+Both players get the same five-letter word and six guesses to find it, racing
+each other. You see the colours of your opponent's guesses as they land, but
+not the letters, until you're done yourself. Fewer guesses wins, and if you
+both take the same number, whoever got there sooner wins. Rounds keep going
+with a running score until someone leaves. At one keyboard it's a game for
+one, with your streak and how many guesses each word took.
+
+Type to guess, or click the keyboard on screen. It colours each letter with
+what you know about it, once that guess has turned over. The tiles and keys
+grow with your terminal, up to big pixel letters on a large screen. When a
+round is settled, a card shows who won and spells out the word; `enter` goes
+again, and any other key puts the card away so you can look at both boards.
+
+| key | |
+|---|---|
+| letters, `⌫`, `enter` | type a guess, and make it |
+| `enter` | between rounds: ready for the next one (both players press it) |
+| `h` | between rounds: hard mode, where letters you've found must be used |
+| `tab` / `t` | chat (`tab` while guessing, when letters are taken) |
+| `esc` | leave (it asks first while a round is on) |
+
+Neither player picks the word. Each side sends a hash of a random secret
+first and reveals the secret afterwards, and the word comes from both secrets.
+Each side also checks every guess the other makes itself. The word lists come
+from [SCOWL](http://wordlist.aspell.net/): about 2,000 common words as
+answers, and about 9,000 more accepted as guesses.
+
 ## Friends
 
 Anyone you play turns up in the lobby under **friends**, and challenging one
@@ -154,15 +185,12 @@ knowing which game it is running.
 
 Adding a game is a module, a `Play` implementation and one line in
 `Kind::ALL`. `games/mod.rs` is the contract; `tests/table.rs` proves it with a
-toy game that isn't chess.
+toy game that isn't chess, and Wordle is a second real one.
 
 Nothing from the opponent is trusted: lines are length-capped before
 authentication, names are cleaned on arrival, and a game checks every message
 against its own state. `unsafe` is forbidden, and release builds keep overflow
 checks on.
-
-[DESIGN.md](DESIGN.md) has the long version: how the pieces are drawn, what
-the two sides say to each other, and how pairing works in detail.
 
 ## Tests
 

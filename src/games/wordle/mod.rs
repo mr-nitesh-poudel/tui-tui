@@ -1,18 +1,15 @@
-//! Chess: the rules ([`rules`]), the state and what keys mean ([`app`]), the
-//! board ([`ui`], with pieces drawn by [`canvas`]), and what the two sides
-//! say to each other ([`protocol`]).
+//! Wordle: the words and how a guess is marked ([`words`]), the match and
+//! what keys mean ([`app`]), the screen ([`ui`]), and what the two sides say
+//! to each other ([`protocol`]).
 //!
-//! This is the whole of chess's connection to the rest of the program: a
-//! [`Descriptor`] for the registry, and [`Play`] for the table.
+//! Two players race to find the same word, each seeing only the colours of
+//! the other's guesses. At one keyboard it is a game for one.
 
-pub mod analysis;
 pub mod app;
-pub mod canvas;
-pub mod download;
-pub mod engine;
+pub mod font;
 pub mod protocol;
-pub mod rules;
 pub mod ui;
+pub mod words;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
@@ -24,9 +21,9 @@ pub use protocol::GAME;
 use super::{Ctx, Descriptor, Handled, Kind, Play, Seat, Table};
 
 pub const DESCRIPTOR: Descriptor = Descriptor {
-    name: "Chess",
+    name: "Wordle",
     wire: GAME,
-    alone: false,
+    alone: true,
     start,
 };
 
@@ -53,16 +50,20 @@ impl Play for App {
         App::on_line(self, line, ctx);
     }
 
+    fn on_connect(&mut self, ctx: &mut Ctx) {
+        App::on_connect(self, ctx);
+    }
+
+    fn on_disconnect(&mut self, ctx: &mut Ctx) {
+        App::on_disconnect(self, ctx);
+    }
+
     fn draw(&self, f: &mut Frame, ctx: &Ctx) {
         ui::draw(f, self, ctx);
     }
 
     fn chat_area(&self, ctx: &Ctx) -> Option<Rect> {
-        ui::Geometry::for_game(ctx.area, ctx, self).chat
-    }
-
-    fn on_wake(&mut self, ctx: &mut Ctx) {
-        App::on_wake(self, ctx);
+        ui::Geometry::of(ctx.area, ctx, self).chat
     }
 
     fn in_play(&self) -> bool {

@@ -36,6 +36,17 @@ pub trait Play {
     /// game's own state before it changes anything.
     fn on_line(&mut self, line: &str, ctx: &mut Ctx);
 
+    /// The opponent is in, and anything sent now reaches them. Called once,
+    /// before any of their lines arrive; never in hot-seat.
+    fn on_connect(&mut self, ctx: &mut Ctx) {
+        let _ = ctx;
+    }
+
+    /// The connection could not be made, or went. [`Ctx::conn`] says why.
+    fn on_disconnect(&mut self, ctx: &mut Ctx) {
+        let _ = ctx;
+    }
+
     /// The whole screen. [`chrome`](super::chrome) has the parts every
     /// game's screen shares.
     fn draw(&self, f: &mut Frame, ctx: &Ctx);

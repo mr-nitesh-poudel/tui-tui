@@ -82,10 +82,11 @@ fn the_game_comes_first_and_changes_in_place() {
         assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Game));
     }
     // Round the list and back to where it started, however long it is.
+    let before = lobby.game();
     for _ in 0..Kind::ALL.len() {
         key(&mut lobby, KeyCode::Right);
     }
-    assert_eq!(lobby.game(), Kind::DEFAULT);
+    assert_eq!(lobby.game(), before);
 }
 
 #[test]
