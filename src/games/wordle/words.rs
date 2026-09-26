@@ -127,7 +127,12 @@ pub fn hard_miss(earlier: &[(Word, [Mark; LEN])], word: &Word) -> Option<String>
             let needed = (0..LEN)
                 .filter(|&j| guess[j] == letter && marks[j] != Mark::Absent)
                 .count();
-            if word.iter().filter(|&&b| b == letter).count() < needed {
+            #[expect(
+                clippy::naive_bytecount,
+                reason = "five letters, which needs no crate to count"
+            )]
+            let has = word.iter().filter(|&&b| b == letter).count();
+            if has < needed {
                 let c = char::from(letter.to_ascii_uppercase());
                 return Some(format!("guess must contain {c}"));
             }

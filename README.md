@@ -11,27 +11,23 @@ shared, so more can follow.
 ![two players, one keyboard, and a fool's mate](demo.gif)
 
 ```
-╭───────────────── tui-tui ──────────────────╮
-│                                            │
-│   Game        ‹ Chess ›                    │
-│                                            │
-│   Host a game                              │
-│   get a code to send your opponent         │
-│   Join a game                              │
-│   type in the code your opponent sent      │
-│   Play on one keyboard                     │
-│   two players taking turns                 │
-│                                            │
-│ friends                                    │
-│ ▸ alice              3 games · 3h ago      │
-│   bob                1 game · yesterday    │
-│                                            │
-│   Your name                                │
-│   ace — what friends see                   │
-│   Quit                                     │
-│                                            │
-│ code 42-tiger-marble-ocean                 │
-╰────────────────────────────────────────────╯
+ tui-tui  v0.3.0                                    playing as ace
+
+   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  ╭───────────────────────────╮
+   ┃   ▓▓▓▓▓░░░░░▓▓▓▓▓░░░░░    ┃  │     S   L   A   T   E     │
+   ┃     ♞    ♛    ♚           ┃  │     C   R   A   N   E     │
+   ┃   ░░░░░▓▓▓▓▓░░░░░▓▓▓▓▓    ┃  │     G   A   M   E   S     │
+   ┃           Chess           ┃  │          Wordle           │
+   ┃   two players, one board  ┃  │  race to a word, or solo  │
+   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  ╰───────────────────────────╯
+
+   ── Play Chess ──────────────     ── Challenge a friend ─────
+    ▸ Host a game                      alice   3 games · 3h ago
+      Play solo                        bob   1 game · yesterday
+
+   ╭ Join a game with a code ─────────────────────────────────╮
+   │ › e.g. 42-tiger-marble-ocean                             │
+   ╰──────────────────────────────────────────────────────────╯
 ```
 
 ## Install
@@ -39,6 +35,15 @@ shared, so more can follow.
 ```
 brew install mr-nitesh-poudel/tap/tuitui
 ```
+
+Or tap once, and from then on it's just `tuitui`:
+
+```
+brew tap mr-nitesh-poudel/tap
+brew install tuitui               # later: brew upgrade tuitui
+```
+
+Either way Stockfish comes along, for analysing chess games.
 
 No Homebrew? A prebuilt binary for macOS and Linux:
 
@@ -62,7 +67,9 @@ tuitui local wordle               # wordle on your own
 Every command but `join` takes an optional game. Joining never needs one: you
 get whatever the host is playing. In chess, the host plays white.
 
-Codes are forgiving. Any case, spaces instead of dashes, and four letters a
+In the lobby, pick a game with `←`/`→` (or a click) and host it; your friend
+types the code into the **Join a game with a code** box — or just starts
+typing the number, from anywhere in the lobby. Codes are forgiving. Any case, spaces instead of dashes, and four letters a
 word is plenty — `42 tige marb ocea` gets you there. Tab finishes a word, and
 a word that isn't in the list is flagged while you type it. Paste the whole
 `tuitui join ...` command if that's what landed in your clipboard.
@@ -142,7 +149,8 @@ answers, and about 9,000 more accepted as guesses.
 
 ## Friends
 
-Anyone you play turns up in the lobby under **friends**, and challenging one
+Anyone you play turns up in the lobby under **Challenge a friend** (`tab`
+gets there), and challenging one
 takes no code at all — their lobby just asks them to accept. Leaving a game
 drops you back with your last opponent already selected, so a rematch is one
 keypress. `x` forgets someone.
@@ -183,7 +191,8 @@ games share — leaving, the mouse, the share code, the connection — so a game
 never touches the network or quitting itself. `hub.rs` runs the loop without
 knowing which game it is running.
 
-Adding a game is a module, a `Play` implementation and one line in
+Adding a game is a module, a `Play` implementation, a `Descriptor` (with a
+line about the game and a thumbnail for its card in the lobby) and one line in
 `Kind::ALL`. `games/mod.rs` is the contract; `tests/table.rs` proves it with a
 toy game that isn't chess, and Wordle is a second real one.
 

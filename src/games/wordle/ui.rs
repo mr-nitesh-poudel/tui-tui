@@ -136,6 +136,10 @@ impl Geometry {
     /// beside them if it can. The board and `side`, as tall as each other,
     /// go in the middle together, with the keyboard boxed underneath.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the screen's layout, worked out top to bottom"
+    )]
     pub fn layout(area: Rect, chat: bool, side: Side) -> Self {
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
@@ -920,6 +924,10 @@ fn draw_key(buf: &mut Buffer, r: Rect, label: &str, bg: Color, fg: Color) {
 
 /// The card over the boards once a round is settled: the verdict, the word
 /// spelt out, the score, and what to do next.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one card, drawn line by line as it reads"
+)]
 fn draw_card(f: &mut Frame, play: Rect, app: &App, ctx: &Ctx, since: Duration) {
     let Some(round) = &app.round else { return };
     let peer = ctx.peer_label();

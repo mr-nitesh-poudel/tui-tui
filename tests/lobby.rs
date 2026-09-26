@@ -56,10 +56,13 @@ fn the_rows_pick_what_is_selected() {
     key(&mut lobby, KeyCode::Down);
     assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Local));
 
-    // Wrapping upwards from the first lands on the last.
+    // Wrapping upwards from the first lands on the last: the code box,
+    // where enter starts typing rather than anything else.
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Up);
-    assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Local));
+    assert_eq!(lobby.rows()[lobby.selected], Row::Code);
+    assert_eq!(key(&mut lobby, KeyCode::Enter), None);
+    assert!(joining(&lobby));
 
     assert_eq!(
         key(&mut Lobby::new(), KeyCode::Char('q')),
@@ -115,6 +118,7 @@ fn typing_a_number_from_the_menu_starts_a_code() {
     let mut lobby = Lobby::new();
     assert_eq!(typed(&mut lobby, "42 Tiger marble ocean"), None);
     assert!(joining(&lobby));
+    assert_eq!(lobby.rows()[lobby.selected], Row::Code, "the box lights up");
     assert_eq!(lobby.input, "42-tiger-marble-ocean");
     assert_eq!(
         key(&mut lobby, KeyCode::Enter),
@@ -239,12 +243,19 @@ fn clicking_an_item_chooses_it() {
     assert_eq!(lobby.on_mouse(mouse(click, (card.x + 1, card.y + 1))), None);
     assert_eq!(lobby.game, last);
 
-    // The name renames, and the status bar takes a code.
+    // The name renames.
     assert_eq!(lobby.on_mouse(mouse(click, (g.name.x + 1, g.name.y))), None);
     assert_eq!(lobby.editing, Some(Field::Name));
-    lobby.editing = None;
-    assert_eq!(lobby.on_mouse(mouse(click, (g.input.x, g.input.y))), None);
-    assert!(joining(&lobby));
+
+    // Anywhere on the code box, border and all, starts a code.
+    let code = lobby.rows().iter().position(|&r| r == Row::Code).unwrap();
+    assert_eq!(g.rows[code], g.code_box);
+    assert!(g.code_box.contains((g.input.x, g.input.y).into()));
+    for spot in [(g.code_box.x, g.code_box.y), (g.input.x, g.input.y)] {
+        lobby.editing = None;
+        assert_eq!(lobby.on_mouse(mouse(click, spot)), None);
+        assert!(joining(&lobby), "{spot:?}");
+    }
 }
 
 #[test]
@@ -276,9 +287,16 @@ fn the_shelf_gives_way_before_the_rows() {
     let lobby = Lobby::new();
     let shelf = |w, h| LobbyGeometry::new(Rect::new(0, 0, w, h), &lobby).shelf;
     assert_eq!(shelf(80, 24), Shelf::Cards { thumbs: true });
-    assert_eq!(shelf(80, 16), Shelf::Cards { thumbs: false });
-    assert_eq!(shelf(80, 10), Shelf::Tabs);
+    assert_eq!(shelf(80, 19), Shelf::Cards { thumbs: false });
+    assert_eq!(shelf(80, 16), Shelf::Tabs);
     assert_eq!(shelf(30, 24), Shelf::Tabs);
+
+    // The code box keeps its border longer than the pictures do, and is
+    // still a line to type on when it has lost it.
+    let code_box = |w, h| LobbyGeometry::new(Rect::new(0, 0, w, h), &lobby).code_box;
+    assert_eq!(code_box(80, 16).height, 3);
+    assert_eq!(code_box(80, 12).height, 1);
+    assert_eq!(code_box(80, 9).height, 1);
 }
 
 #[test]
@@ -287,11 +305,15 @@ fn enter_on_a_friend_challenges_them_and_x_forgets() {
     lobby.set_friends(vec![friend("alice", 2), friend("bob", 1)]);
     let (alice, bob) = (lobby.friends[0].id, lobby.friends[1].id);
 
-    // Tab goes over to the friends, and back.
+    // Tab goes over to the friends, then the code box, and round again;
+    // shift-Tab the other way.
+    for want in [Row::Friend(0), Row::Code, Row::Item(Item::Host)] {
+        key(&mut lobby, KeyCode::Tab);
+        assert_eq!(lobby.rows()[lobby.selected], want);
+    }
+    key(&mut lobby, KeyCode::BackTab);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Code);
     key(&mut lobby, KeyCode::Tab);
-    assert_eq!(lobby.rows()[lobby.selected], Row::Friend(0));
-    key(&mut lobby, KeyCode::Tab);
-    assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Host));
     // As do the arrows, past what there is to do.
     key(&mut lobby, KeyCode::Down);
     key(&mut lobby, KeyCode::Down);
@@ -313,12 +335,14 @@ fn enter_on_a_friend_challenges_them_and_x_forgets() {
         Some(Choice::Forget(bob))
     );
 
-    // x means nothing away from a friend, and Tab nothing without one.
+    // x means nothing away from a friend, and Tab skips the friends when
+    // there are none.
     let mut lobby = Lobby::new();
     key(&mut lobby, KeyCode::Char('x'));
     assert_eq!(lobby.forgetting, None);
     key(&mut lobby, KeyCode::Tab);
-    assert_eq!(lobby.selected, 0);
+    assert_eq!(lobby.rows()[lobby.selected], Row::Code);
+    assert!(!joining(&lobby), "only enter or typing starts a code");
 }
 
 #[test]
@@ -329,8 +353,11 @@ fn the_selection_stays_put_when_friends_change() {
     lobby.set_friends(vec![]);
     assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Local));
 
+    lobby.selected = index(&lobby, Item::Local) + 1;
     lobby.set_friends(vec![friend("alice", 0), friend("bob", 0)]);
-    lobby.selected = 4;
+    assert_eq!(lobby.rows()[lobby.selected], Row::Code);
+
+    lobby.selected = 3;
     lobby.set_friends(vec![friend("alice", 0)]);
     assert!(lobby.selected < lobby.rows().len());
 }

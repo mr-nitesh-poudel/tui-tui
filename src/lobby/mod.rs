@@ -1,7 +1,7 @@
 //! The first screen: a shelf of games along the top, and under it what can be
-//! done with the one picked: host it, share a keyboard over it, or challenge
-//! a friend to it. Joining needs no game (the host names it), so a code can be
-//! typed from anywhere.
+//! done with the one picked: host it, play it solo, or challenge a friend to
+//! it. Beneath those, a box to type a code into and join, which needs no game
+//! (the host names it); typing a code's number anywhere starts one there.
 //!
 //! Like a game, this only holds state and decides what a key or click means;
 //! [`draw_lobby`] draws it and `main` acts on the [`Choice`] it returns.
@@ -48,12 +48,14 @@ impl Item {
     }
 }
 
-/// One selectable line in the lobby.
+/// One selectable thing in the lobby.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
     Item(Item),
     /// An index into [`Lobby::friends`].
     Friend(usize),
+    /// The box a code is typed into, to join someone else's game.
+    Code,
 }
 
 /// What is being typed into.
@@ -149,6 +151,7 @@ impl Lobby {
             .into_iter()
             .map(Row::Item)
             .chain((0..friends).map(Row::Friend))
+            .chain([Row::Code])
             .collect()
     }
 
@@ -168,16 +171,13 @@ impl Lobby {
     }
 
     /// Steps through the games, wrapping round at either end.
-    pub fn next_game(&mut self, step: isize) {
+    fn next_game(&mut self, step: isize) {
         let n = Kind::ALL.len().cast_signed();
         self.game = (self.game.cast_signed() + step).rem_euclid(n) as usize;
     }
 
-    fn row_of(&self, item: Item) -> usize {
-        self.rows()
-            .iter()
-            .position(|&r| r == Row::Item(item))
-            .unwrap_or(0)
+    fn row_of(&self, row: Row) -> usize {
+        self.rows().iter().position(|&r| r == row).unwrap_or(0)
     }
 
     /// Keep the selection on something that exists after the friends change.
@@ -186,7 +186,7 @@ impl Lobby {
         self.friends = friends;
         let last = self.rows().len().saturating_sub(1);
         self.selected = match was {
-            Some(Row::Item(item)) => self.row_of(item),
+            Some(row @ (Row::Item(_) | Row::Code)) => self.row_of(row),
             _ => self.selected.min(last),
         };
         self.forgetting = None;
@@ -236,14 +236,9 @@ impl Lobby {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1) % rows.len();
             }
-            // Between what to do and whom to challenge.
-            KeyCode::Tab | KeyCode::BackTab => {
-                if self.on_friend().is_some() {
-                    self.selected = 0;
-                } else if !self.friends.is_empty() {
-                    self.selected = Item::ALL.len();
-                }
-            }
+            // From what to do, to whom to challenge, to the code box.
+            KeyCode::Tab => self.selected = self.next_section(1),
+            KeyCode::BackTab => self.selected = self.next_section(-1),
             // The game can be changed from anywhere: everything below it
             // is about it.
             KeyCode::Left | KeyCode::Char('h') => self.next_game(-1),
@@ -359,11 +354,30 @@ impl Lobby {
         None
     }
 
+    /// The first row of the section `step` along from the selected one's,
+    /// skipping the friends when there are none.
+    fn next_section(&self, step: isize) -> usize {
+        let rows = self.rows();
+        let firsts: Vec<usize> = (0..rows.len())
+            .filter(|&i| i == 0 || !same_section(rows[i - 1], rows[i]))
+            .collect();
+        let here = firsts
+            .iter()
+            .rposition(|&first| first <= self.selected)
+            .unwrap_or(0);
+        let n = firsts.len().cast_signed();
+        firsts[(here.cast_signed() + step).rem_euclid(n) as usize]
+    }
+
     fn activate(&mut self, i: usize) -> Option<Choice> {
         match *self.rows().get(i)? {
             Row::Item(Item::Host) => Some(Choice::Host),
             Row::Item(Item::Local) => Some(Choice::Local),
             Row::Friend(f) => self.friends.get(f).map(|f| Choice::Challenge(f.id)),
+            Row::Code => {
+                self.edit(Field::Code);
+                None
+            }
         }
     }
 
@@ -374,6 +388,9 @@ impl Lobby {
 
     fn edit(&mut self, field: Field) {
         self.editing = Some(field);
+        if field == Field::Code {
+            self.selected = self.row_of(Row::Code);
+        }
     }
 
     /// Typed text goes in the way it will be read back: lower case, with any
@@ -450,4 +467,12 @@ impl Lobby {
         }
         Entry::Typing
     }
+}
+
+/// Whether two rows are in the same part of the screen.
+fn same_section(a: Row, b: Row) -> bool {
+    matches!(
+        (a, b),
+        (Row::Item(_), Row::Item(_)) | (Row::Friend(_), Row::Friend(_)) | (Row::Code, Row::Code)
+    )
 }

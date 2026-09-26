@@ -2,10 +2,11 @@
 //!
 //! A header with who is playing, a shelf of game cards, and under it two
 //! columns: what can be done with the game picked, and the friends it can be
-//! played with. The status bar at the bottom says what the chosen row does,
-//! and is where a code is typed. On a small screen the thumbnails go first,
-//! then the cards shrink to a line of tabs, then the friends move under the
-//! actions and the status bar loses its box, so the rows themselves are the
+//! played with. Beneath them, a box to type a code into and join; the status
+//! bar at the bottom says what the chosen row does, or how the code is
+//! looking. On a small screen the thumbnails go first, then the cards shrink
+//! to a line of tabs, then the friends move under the actions, the status bar
+//! and then the code box lose their borders, so the rows themselves are the
 //! last thing to be squeezed. Stars fill whatever sky is left.
 
 use ratatui::layout::{Position, Rect};
@@ -53,13 +54,17 @@ pub struct LobbyGeometry {
     pub friends_heading: Rect,
     /// Where the friends would be, when there are none.
     pub friends_note: Rect,
-    /// One line per row of the lobby, the width of its column.
+    /// One per row of the lobby: a line the width of its column, or for
+    /// [`Row::Code`] the whole code box.
     pub rows: Vec<Rect>,
-    /// The status bar: what the chosen row does, or the code being typed.
-    pub status: Rect,
-    /// The line inside the status bar that the words go on; a click there
-    /// starts a code.
+    /// The code box, boxed or a bare line.
+    pub code_box: Rect,
+    /// The line in the code box that a code is typed on.
     pub input: Rect,
+    /// The status bar: what the chosen row does, or how the code is looking.
+    pub status: Rect,
+    /// The line inside the status bar that the words go on.
+    pub hint: Rect,
     pub footer: Rect,
 }
 
@@ -88,43 +93,62 @@ struct Plan {
     shelf: Shelf,
     /// 3 for a boxed status bar, 1 for a bare line.
     status: u16,
+    /// The same, for the code box.
+    field: u16,
     /// Blank lines between the parts.
     gap: u16,
 }
 
 impl Plan {
     /// From the most to the least, each giving up one thing.
-    const ALL: [Plan; 5] = [
+    const ALL: [Plan; 6] = [
         Plan {
             shelf: Shelf::Cards { thumbs: true },
             status: 3,
+            field: 3,
             gap: 1,
         },
         Plan {
             shelf: Shelf::Cards { thumbs: false },
             status: 3,
+            field: 3,
             gap: 1,
         },
         Plan {
             shelf: Shelf::Tabs,
             status: 3,
+            field: 3,
             gap: 1,
         },
         Plan {
             shelf: Shelf::Tabs,
             status: 1,
+            field: 3,
             gap: 1,
         },
         Plan {
             shelf: Shelf::Tabs,
             status: 1,
+            field: 1,
+            gap: 1,
+        },
+        Plan {
+            shelf: Shelf::Tabs,
+            status: 1,
+            field: 1,
             gap: 0,
         },
     ];
 
-    /// Header, shelf, body, status bar and footer, with the gaps between.
+    /// What goes between the header and the status bar: shelf, body and
+    /// code box, with the gaps between.
+    fn content(self, body: u16) -> u16 {
+        self.shelf.height() + self.gap + body + self.gap + self.field
+    }
+
+    /// Everything, with a gap either side of the content.
     fn height(self, body: u16) -> u16 {
-        1 + self.gap + self.shelf.height() + self.gap + body + self.gap + self.status + 1
+        1 + self.gap + self.content(body) + self.gap + self.status + 1
     }
 }
 
@@ -155,25 +179,24 @@ impl LobbyGeometry {
         let actions_h = 1 + cells(Item::ALL.len());
         let friends_h = 1 + friends.max(1);
 
-        let fits = |p: &Plan| {
-            let body = if two_columns {
+        // The actions and friends, side by side or one above the other.
+        let body_h = |gap: u16| {
+            if two_columns {
                 actions_h.max(friends_h)
             } else {
-                actions_h + p.gap + friends_h
-            };
+                actions_h + gap + friends_h
+            }
+        };
+        let fits = |p: &Plan| {
             let wide_enough = p.shelf == Shelf::Tabs || card_w >= CARD_MIN_W;
-            wide_enough && p.height(body) <= area.height
+            wide_enough && p.height(body_h(p.gap)) <= area.height
         };
         let plan = Plan::ALL
             .into_iter()
             .find(fits)
             .unwrap_or(Plan::ALL[Plan::ALL.len() - 1]);
         let gap = plan.gap;
-        let body_h = if two_columns {
-            actions_h.max(friends_h)
-        } else {
-            actions_h + gap + friends_h
-        };
+        let body_h = body_h(gap);
 
         // Header and footer hug the edges, the status bar sits on the
         // footer, and the shelf and body share what is between, centred.
@@ -191,7 +214,7 @@ impl LobbyGeometry {
             width: area.width,
             height: plan.status,
         });
-        let input = if plan.status == 3 {
+        let hint = if plan.status == 3 {
             clip(Rect {
                 x: status.x + 2,
                 y: status.y + 1,
@@ -203,7 +226,7 @@ impl LobbyGeometry {
         };
         let top = area.y.saturating_add(1 + gap);
         let room = status.y.saturating_sub(gap).saturating_sub(top);
-        let content_h = plan.shelf.height() + gap + body_h;
+        let content_h = plan.content(body_h);
         let shelf_y = top.saturating_add(room.saturating_sub(content_h) / 2);
 
         let cards: Vec<Rect> = match plan.shelf {
@@ -252,6 +275,22 @@ impl LobbyGeometry {
         let actions_heading = line(content_x, body_y, left_w);
         let friends_heading = line(right_x, friends_y, right_w);
         let friends_note = line(right_x, friends_y.saturating_add(1), right_w);
+        let code_box = clip(Rect {
+            x: content_x,
+            y: body_y.saturating_add(body_h + gap),
+            width: content_w,
+            height: plan.field,
+        });
+        let input = if plan.field == 3 {
+            clip(Rect {
+                x: code_box.x + 2,
+                y: code_box.y + 1,
+                width: code_box.width.saturating_sub(4),
+                height: 1,
+            })
+        } else {
+            code_box
+        };
         let mut placed = Vec::with_capacity(rows.len());
         let (mut action, mut friend) = (0u16, 0u16);
         for row in &rows {
@@ -264,11 +303,18 @@ impl LobbyGeometry {
                     friend += 1;
                     line(right_x, friends_y.saturating_add(friend), right_w)
                 }
+                Row::Code => code_box,
             });
         }
         // Nothing may be clicked where the status bar or footer is drawn.
         let floor = status.y;
-        let above = |r: Rect| if r.y < floor { r } else { Rect::default() };
+        let above = |r: Rect| {
+            if r.bottom() <= floor {
+                r
+            } else {
+                Rect::default()
+            }
+        };
 
         Self {
             header,
@@ -279,8 +325,10 @@ impl LobbyGeometry {
             friends_heading: above(friends_heading),
             friends_note: above(friends_note),
             rows: placed.into_iter().map(above).collect(),
+            code_box: above(code_box),
+            input: above(input),
             status,
-            input,
+            hint,
             footer,
         }
     }
@@ -333,6 +381,10 @@ pub fn draw_lobby(f: &mut Frame, lobby: &Lobby) {
 
     for (i, (&row, &area)) in rows.iter().zip(&g.rows).enumerate() {
         let chosen = i == lobby.selected && lobby.editing.is_none();
+        if row == Row::Code {
+            draw_code_box(f, &g, lobby, i == lobby.selected);
+            continue;
+        }
         if chosen {
             f.render_widget(Block::default().style(Style::default().bg(HIGHLIGHT)), area);
         }
@@ -513,6 +565,8 @@ fn row_line(lobby: &Lobby, row: Row, chosen: bool, width: u16) -> Line<'static> 
     };
     match row {
         Row::Item(item) => Line::from(vec![marker, Span::styled(item.label(), label)]),
+        // Drawn by `draw_code_box`.
+        Row::Code => Line::raw(""),
         Row::Friend(n) => {
             let Some(friend) = lobby.friends.get(n) else {
                 return Line::raw("");
@@ -545,14 +599,19 @@ fn row_line(lobby: &Lobby, row: Row, chosen: bool, width: u16) -> Line<'static> 
     }
 }
 
-/// The code being typed, and how far along it the cursor sits.
-fn code_line(lobby: &Lobby) -> (Line<'static>, usize) {
+/// The code being typed, and how far along it the cursor sits. Without the
+/// box's title to say what it is, the line says so itself.
+fn code_line(lobby: &Lobby, boxed: bool) -> (Line<'static>, usize) {
     let muted = Style::default().fg(MUTED);
-    let prompt = Span::styled("code › ", Style::default().fg(CURSOR));
-    let start = 7;
+    let prompt = if boxed { "› " } else { "code › " };
+    let start = prompt.chars().count();
+    let prompt = Span::styled(prompt, Style::default().fg(CURSOR));
     if lobby.input.is_empty() {
         return (
-            Line::from(vec![prompt, Span::styled("42-tiger-marble-ocean", muted)]),
+            Line::from(vec![
+                prompt,
+                Span::styled("e.g. 42-tiger-marble-ocean", muted),
+            ]),
             start,
         );
     }
@@ -588,8 +647,74 @@ fn code_verdict(lobby: &Lobby) -> Line<'static> {
     }
 }
 
+/// The box a code is typed into: bordered and titled when there is room, and
+/// lit up when chosen or typed into.
+fn draw_code_box(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby, chosen: bool) {
+    let editing = lobby.editing == Some(Field::Code);
+    let boxed = g.code_box.height >= 3;
+    if boxed {
+        let (colour, border) = if editing {
+            (CURSOR, BorderType::Thick)
+        } else if chosen && lobby.editing.is_none() {
+            (CURSOR, BorderType::Rounded)
+        } else {
+            (QUIET, BorderType::Rounded)
+        };
+        let title = Style::default().fg(BRIGHT).add_modifier(Modifier::BOLD);
+        f.render_widget(Clear, g.code_box);
+        f.render_widget(
+            Block::bordered()
+                .border_type(border)
+                .border_style(Style::default().fg(colour))
+                .title(Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled("Join a game with a code", title),
+                    Span::raw(" "),
+                ])),
+            g.code_box,
+        );
+    } else if editing || (chosen && lobby.editing.is_none()) {
+        f.render_widget(
+            Block::default().style(Style::default().bg(HIGHLIGHT)),
+            g.code_box,
+        );
+    }
+
+    let (line, cursor) = code_line(lobby, boxed);
+    // Beside the code, how it is looking; or, before any is typed, where
+    // one comes from.
+    let aside = if editing {
+        code_verdict(lobby)
+    } else {
+        Line::styled(
+            "the code a friend got by hosting",
+            Style::default().fg(MUTED),
+        )
+    };
+    if verdict_fits(g, lobby) || (!editing && fits_beside(g, &line, &aside)) {
+        f.render_widget(Paragraph::new(aside.right_aligned()), g.input);
+    }
+    f.render_widget(Paragraph::new(line), g.input);
+    if editing {
+        set_cursor(f, g.input, cursor);
+    }
+}
+
+fn fits_beside(g: &LobbyGeometry, line: &Line, aside: &Line) -> bool {
+    usize::from(g.input.width) >= line.width() + aside.width() + 2
+}
+
+/// Whether how the code is looking is shown in the code box, rather than in
+/// the status bar.
+fn verdict_fits(g: &LobbyGeometry, lobby: &Lobby) -> bool {
+    lobby.editing == Some(Field::Code) && {
+        let (line, _) = code_line(lobby, g.code_box.height >= 3);
+        fits_beside(g, &line, &code_verdict(lobby))
+    }
+}
+
 /// What the chosen row does, or whatever the lobby has to say.
-fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
+fn status_line(g: &LobbyGeometry, lobby: &Lobby, rows: &[Row]) -> Line<'static> {
     let muted = Style::default().fg(QUIET);
     if let Some(i) = lobby.forgetting {
         let name = lobby.friends.get(i).map_or("them", |f| f.name.as_str());
@@ -600,6 +725,12 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
     }
     if lobby.editing == Some(Field::Name) {
         return Line::styled("what friends will see you as — enter saves", muted);
+    }
+    if lobby.editing == Some(Field::Code) {
+        if !verdict_fits(g, lobby) {
+            return code_verdict(lobby);
+        }
+        return Line::styled("your friend hosts, and their screen shows the code", muted);
     }
     if let Some(notice) = &lobby.notice {
         return Line::styled(notice.clone(), Style::default().fg(CURSOR));
@@ -613,7 +744,7 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
     let game = lobby.game().name().to_lowercase();
     let text = match rows.get(lobby.selected) {
         Some(Row::Item(Item::Host)) => {
-            format!("get a code to send your opponent, then wait here to play {game}")
+            format!("get a code for your opponent to type in, then wait here to play {game}")
         }
         Some(Row::Item(Item::Local)) if lobby.game().alone() => {
             format!("a game of {game} on your own")
@@ -623,6 +754,9 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
             let name = lobby.friends.get(*n).map_or("them", |f| f.name.as_str());
             format!("challenge {name} to a game of {game}")
         }
+        Some(Row::Code) => {
+            "join a friend who hosted: type or paste the code their screen shows".into()
+        }
         None => String::new(),
     };
     Line::styled(text, muted)
@@ -631,44 +765,25 @@ fn status_line(lobby: &Lobby, rows: &[Row]) -> Line<'static> {
 fn draw_status(f: &mut Frame, g: &LobbyGeometry, lobby: &Lobby, rows: &[Row]) {
     if g.status.height >= 3 {
         f.render_widget(Clear, g.status);
-        let border = if lobby.editing == Some(Field::Code) {
-            CURSOR
-        } else {
-            MUTED
-        };
         f.render_widget(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(border)),
+                .border_style(Style::default().fg(MUTED)),
             g.status,
         );
     }
-    if lobby.editing != Some(Field::Code) {
-        let line = status_line(lobby, rows);
-        let line = if g.status.height >= 3 {
-            line
-        } else {
-            line.centered()
-        };
-        f.render_widget(Paragraph::new(line), g.input);
-        return;
-    }
-    let (line, cursor) = code_line(lobby);
-    let verdict = code_verdict(lobby);
-    // How it is going goes at the far end, when there is room for both.
-    if usize::from(g.input.width) >= line.width() + verdict.width() + 2 {
-        f.render_widget(Paragraph::new(verdict.right_aligned()), g.input);
-    }
-    f.render_widget(Paragraph::new(line), g.input);
-    set_cursor(f, g.input, cursor);
+    let line = status_line(g, lobby, rows);
+    let line = if g.status.height >= 3 {
+        line
+    } else {
+        line.centered()
+    };
+    f.render_widget(Paragraph::new(line), g.hint);
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby) {
-    let tab = if lobby.on_friend().is_some() {
-        ("tab", "actions")
-    } else {
-        ("tab", "friends")
-    };
+    let tab = ("tab", "next");
+    let on_code = lobby.rows().get(lobby.selected) == Some(&Row::Code);
     let mut keys: Vec<(&str, &str)> = if lobby.invite.is_some() {
         vec![("y", "accept"), ("n", "decline")]
     } else if lobby.editing == Some(Field::Code) {
@@ -690,13 +805,24 @@ fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby) {
             ("n", "rename"),
             ("q", "quit"),
         ]
+    } else if on_code {
+        vec![
+            ("enter", "type a code"),
+            ("←/→", "game"),
+            tab,
+            ("n", "rename"),
+            ("q", "quit"),
+        ]
     } else {
-        let mut keys = vec![("enter", "play"), ("←/→", "game"), ("0-9", "join")];
-        if !lobby.friends.is_empty() {
-            keys.push(tab);
-        }
-        keys.extend([("n", "rename"), ("↑/↓", "select"), ("q", "quit")]);
-        keys
+        vec![
+            ("enter", "play"),
+            ("←/→", "game"),
+            tab,
+            ("0-9", "join"),
+            ("n", "rename"),
+            ("↑/↓", "select"),
+            ("q", "quit"),
+        ]
     };
     if Kind::ALL.len() < 2 {
         keys.retain(|&(k, _)| k != "←/→");
