@@ -40,6 +40,7 @@ impl Net {
 }
 
 /// Play over `link` until one side hangs up.
+#[must_use]
 pub fn play(link: Link, events: UnboundedSender<NetEvent>) -> Net {
     let (out_tx, out_rx) = unbounded_channel();
     let peer = link.peer;

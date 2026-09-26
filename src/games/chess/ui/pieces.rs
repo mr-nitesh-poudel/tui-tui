@@ -6,11 +6,15 @@ use shakmaty::{Color as Side, Piece, Role};
 
 use super::board::canvas_dots;
 use super::{PieceStyle, centre};
+use crate::ui::cells;
 
 /// The rows of text that make up a piece, given how much room the square has.
 pub(super) fn piece_rows(role: Role, style: PieceStyle, cell_h: u16) -> Vec<String> {
     if style == PieceStyle::Art && cell_h >= 3 {
-        return art(role).iter().map(|s| s.to_string()).collect();
+        return art(role)
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
     }
     let single = match style {
         PieceStyle::Letter | PieceStyle::BigLetter => letter(role),
@@ -55,11 +59,11 @@ impl Sprite {
     }
 
     pub(super) fn width(&self) -> u16 {
-        self.rows[0].len() as u16 + 2 * self.pad()
+        cells(self.rows[0].len()) + 2 * self.pad()
     }
 
     pub(super) fn height(&self) -> u16 {
-        self.rows.len() as u16 + 2 * self.pad()
+        cells(self.rows.len()) + 2 * self.pad()
     }
 
     /// The glyph as written, before any outline is grown around it.
@@ -130,6 +134,7 @@ pub(super) fn ink(style: PieceStyle, side: Side) -> &'static Ink {
 
 /// The `(body, outline)` colours a side's pieces are drawn in. Public so a
 /// test can read sprites back out of a rendered buffer.
+#[must_use]
 pub fn piece_ink(style: PieceStyle, side: Side) -> (Color, Color) {
     let ink = ink(style, side);
     (ink.fill, ink.line)
@@ -325,7 +330,7 @@ pub(super) fn piece_cell(
     }
 
     let rows = piece_rows(piece.role, style, ch);
-    let top = (ch - rows.len() as u16).div_ceil(2);
+    let top = (ch - cells(rows.len())).div_ceil(2);
     let content = match sub.checked_sub(top) {
         Some(i) if (i as usize) < rows.len() => centre(&rows[i as usize], cw),
         _ => " ".repeat(cw.into()),

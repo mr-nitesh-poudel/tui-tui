@@ -21,6 +21,7 @@ pub enum Copied {
     Terminal,
 }
 
+#[must_use]
 pub fn copy(text: &str) -> Copied {
     let _ = execute!(std::io::stdout(), CopyToClipboard::to_clipboard_from(text));
     if !over_ssh() && native(text) {

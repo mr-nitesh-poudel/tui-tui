@@ -16,7 +16,7 @@ use crate::games::chess::app::{App, Ending, Finale, Tone};
 use crate::games::chess::canvas;
 use crate::games::chess::rules::PROMOTION_ROLES;
 use crate::games::{Conn, Ctx, chrome};
-use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, centred, keycaps};
+use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, cells, centred, keycaps};
 
 /// Words that should be read, but are not the point.
 const QUIET: Color = Color::Rgb(186, 182, 176);
@@ -55,10 +55,10 @@ pub(super) fn draw_sidebar(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     let top = card(app, ctx, !bottom_side, inner_w);
     let bottom = card(app, ctx, bottom_side, inner_w);
     let [top_area, moves, state, bottom_area] = Layout::vertical([
-        Constraint::Length(top.lines.len() as u16 + 2),
+        Constraint::Length(cells(top.lines.len()) + 2),
         Constraint::Min(3),
         Constraint::Length(1),
-        Constraint::Length(bottom.lines.len() as u16 + 2),
+        Constraint::Length(cells(bottom.lines.len()) + 2),
     ])
     .areas(area);
 
@@ -542,7 +542,7 @@ pub(super) fn draw_promotion(f: &mut Frame, g: &Geometry, app: &App) {
             .enumerate()
             .map(|(i, &role)| {
                 let piece = Piece { color: side, role };
-                canvas_piece(piece, (i as u16, 0), (0.0, 0.0), (g.promo_cell, inner_h))
+                canvas_piece(piece, (cells(i), 0), (0.0, 0.0), (g.promo_cell, inner_h))
             })
             .collect();
         canvas::stamp(f.buffer_mut(), area, &pieces, dots);
@@ -584,10 +584,10 @@ pub(super) fn draw_verdict(
         Ending::Checkmate => "CHECKMATE",
         Ending::Resignation => "RESIGNED",
     };
-    let letters = word.len() as f32;
+    let letters = f32::from(cells(word.len()));
     let shown = reveal * letters;
     let colour = |i: usize| {
-        let age = shown - i as f32;
+        let age = shown - f32::from(cells(i));
         if age < 1.0 {
             blend(FLASH, MATE_RED, age)
         } else {
@@ -595,7 +595,7 @@ pub(super) fn draw_verdict(
         }
     };
 
-    let big_w = word.len() as u16 * 6 - 1;
+    let big_w = cells(word.len()) * 6 - 1;
     let big = g.board.width >= big_w + 6 && g.board.height >= 13;
     let mut lines = vec![Line::raw("")];
     if big {
@@ -605,7 +605,7 @@ pub(super) fn draw_verdict(
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
-                let text = if (i as f32) < shown {
+                let text = if f32::from(cells(i)) < shown {
                     glyph(c)[row]
                 } else {
                     "     "
@@ -619,7 +619,7 @@ pub(super) fn draw_verdict(
             .chars()
             .enumerate()
             .map(|(i, c)| {
-                let text = if (i as f32) < shown { c } else { ' ' };
+                let text = if f32::from(cells(i)) < shown { c } else { ' ' };
                 Span::styled(format!("{text} "), Style::default().fg(colour(i)).bold())
             })
             .collect();
@@ -651,10 +651,10 @@ pub(super) fn draw_verdict(
     let width = if big {
         big_w + 6
     } else {
-        2 * word.len() as u16 + 8
+        2 * cells(word.len()) + 8
     }
     .max(30);
-    let height = lines.len().max(if big { 10 } else { 5 }) as u16 + 2;
+    let height = cells(lines.len().max(if big { 10 } else { 5 })) + 2;
     // In the half of the board away from the king, so the mate stays in
     // view, if there is room there.
     let half = g.grid.height / 2;

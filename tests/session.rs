@@ -81,7 +81,7 @@ async fn joiner_declines_a_game_it_does_not_have() {
 /// Publishes to and resolves from the real Mainline DHT, so it needs the
 /// internet and can take a minute. Run it with `cargo test -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs the internet"]
 async fn code_round_trips_through_the_dht() {
     let code = Code::generate();
     let host = session::bind(SecretKey::generate()).await.unwrap();

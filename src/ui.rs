@@ -15,15 +15,29 @@ pub const MUTED: Color = Color::Rgb(128, 128, 128);
 
 /// Mixes `over` into `base` at `alpha`. Terminals have no alpha channel, so
 /// the blend happens here and is handed over as one solid colour.
+#[must_use]
 pub fn blend(base: Color, over: Color, alpha: f32) -> Color {
     let (Color::Rgb(br, bg, bb), Color::Rgb(or, og, ob)) = (base, over) else {
         return over;
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a blend of two bytes is itself a byte, for alpha from 0 to 1"
+    )]
     let mix = |b: u8, o: u8| (f32::from(b) * (1.0 - alpha) + f32::from(o) * alpha).round() as u8;
     Color::Rgb(mix(br, or), mix(bg, og), mix(bb, ob))
 }
 
+/// `n` as a number of terminal cells. Nothing on screen comes near
+/// `u16::MAX` of them, but anything that did is clamped rather than wrapped.
+#[must_use]
+pub fn cells(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
 /// A `w` by `h` rectangle in the middle of `area`, shrunk to fit.
+#[must_use]
 pub fn centred(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
@@ -41,6 +55,7 @@ pub const BRIGHT: Color = Color::Rgb(250, 248, 244);
 pub const KEYCAP: Color = Color::Rgb(72, 70, 68);
 
 /// Keys as little caps, each followed by what it does.
+#[must_use]
 pub fn keycaps(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
     let cap = Style::default().bg(KEYCAP).fg(BRIGHT);
     let muted = Style::default().fg(MUTED);
@@ -57,6 +72,7 @@ pub fn keycaps(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
 
 /// As many of `keys` as fit in `width`, in order. Keys go from the end
 /// first, except the last, which is always the way out and always kept.
+#[must_use]
 pub fn keycaps_fit(keys: &[(&str, &str)], width: u16) -> Vec<Span<'static>> {
     let width = usize::from(width);
     let Some((last, rest)) = keys.split_last() else {

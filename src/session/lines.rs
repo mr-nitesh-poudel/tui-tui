@@ -39,6 +39,10 @@ impl<R: AsyncRead + Unpin> Lines<R> {
     /// Cancel safe, so it can race other work in `select!`: a read given up
     /// on keeps whatever part of a line it had, and the next picks up from
     /// there. That part counts towards the limit.
+    ///
+    /// # Errors
+    ///
+    /// If reading fails, or the line is too long or not UTF-8.
     pub async fn next_line(&mut self) -> io::Result<Option<String>> {
         // One byte over the limit, so a line of exactly MAX_LINE bytes still
         // has room for its newline.

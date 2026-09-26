@@ -22,6 +22,10 @@ use crate::ui::{CURSOR, MUTED, SELECTED, blend};
 /// The engine's best move, pointed out in blue.
 const HINT: Color = Color::Rgb(72, 146, 214);
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the board, which reads best in one place"
+)]
 pub(super) fn draw_board(
     f: &mut Frame,
     g: &Geometry,
@@ -93,7 +97,7 @@ pub(super) fn draw_board(
                 match piece {
                     Some(p) => spans.extend(piece_cell(p, sub, cw, ch, style, bg)),
                     None => {
-                        spans.push(Span::styled(" ".repeat(cw.into()), Style::default().bg(bg)))
+                        spans.push(Span::styled(" ".repeat(cw.into()), Style::default().bg(bg)));
                     }
                 }
             }
@@ -160,6 +164,10 @@ pub(super) fn draw_board(
 /// The mark is drawn in octants where the terminal has them and half blocks
 /// where it may not, a shade darker than the square. It leaves alone any cell
 /// a piece is already drawn in.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "screen geometry, named as it is everywhere else here"
+)]
 fn draw_mark(
     buf: &mut Buffer,
     g: &Geometry,
@@ -280,6 +288,7 @@ pub(super) fn canvas_piece(
 
 /// The colour a side's canvas pieces are drawn in. Public so a test can
 /// read the pieces back out of a rendered buffer.
+#[must_use]
 pub fn canvas_colour(side: Side) -> Color {
     match side {
         Side::White => Color::Rgb(255, 255, 255),
@@ -291,6 +300,10 @@ pub fn canvas_colour(side: Side) -> Color {
 ///
 /// Working straight on the buffer keeps the piece free of the square grid, so
 /// it can sit halfway between two squares.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "screen geometry, named as it is everywhere else here"
+)]
 pub(super) fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slide, t: f32) {
     let (cw, ch) = g.cell;
     // Ease in and out, so the piece does not start and stop abruptly.
@@ -339,6 +352,11 @@ pub(super) fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slid
     let (fx, fy) = origin(slide.from);
     let (tx, ty) = origin(slide.to);
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "a distance across the board, in cells, is small enough to go through f32 and back"
+    )]
     let lerp = |a: i32, b: i32| a + (((b - a) as f32) * e).round() as i32;
     let (x, y) = (lerp(fx, tx), lerp(fy, ty));
 
@@ -350,14 +368,18 @@ pub(super) fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slid
 
     let rows = i32::from(sprite.height());
     for cy in y.div_euclid(2)..=(y + rows - 1).div_euclid(2) {
-        if cy < 0 || cy >= i32::from(g.grid.height) {
+        let Ok(row) = u16::try_from(cy) else { continue };
+        if row >= g.grid.height {
             continue;
         }
         for cx in x..x + i32::from(sprite.width()) {
-            if cx < 0 || cx >= i32::from(g.grid.width) {
+            let Ok(col) = u16::try_from(cx) else { continue };
+            if col >= g.grid.width {
                 continue;
             }
-            let sx = (cx - x) as u16;
+            let Ok(sx) = u16::try_from(cx - x) else {
+                continue;
+            };
             let pixel = |py: i32| u16::try_from(py - y).ok().and_then(|sy| sprite.at(sx, sy));
             let (top, bottom) = (pixel(cy * 2), pixel(cy * 2 + 1));
             if top.is_none() && bottom.is_none() {
@@ -365,7 +387,7 @@ pub(super) fn draw_slide(buf: &mut Buffer, g: &Geometry, app: &App, slide: &Slid
             }
 
             // Keep whatever the board already put behind the transparent half.
-            let pos = (g.grid.x + cx as u16, g.grid.y + cy as u16);
+            let pos = (g.grid.x + col, g.grid.y + row);
             let cell = &buf[pos];
             let (was_top, was_bottom) = if cell.symbol() == "▀" {
                 (cell.fg, cell.bg)

@@ -56,6 +56,7 @@ const LINUX_ARM64: Build = Build {
 /// The build for an operating system and processor, named as Rust names
 /// them, if Stockfish publishes one this can install. Its builds pick the
 /// best instructions the processor has as they start, so one does for each.
+#[must_use]
 pub fn build_for(os: &str, arch: &str) -> Option<Build> {
     match (os, arch) {
         ("macos", "aarch64" | "x86_64") => Some(MACOS),
@@ -66,12 +67,14 @@ pub fn build_for(os: &str, arch: &str) -> Option<Build> {
 }
 
 /// The build for this machine.
+#[must_use]
 pub fn this_build() -> Option<Build> {
     build_for(std::env::consts::OS, std::env::consts::ARCH)
 }
 
 /// Where downloaded engines live: `TUI_TUI_HOME` if it is set, as the
 /// profile does, else the platform's data directory.
+#[must_use]
 pub fn home() -> Option<PathBuf> {
     match std::env::var_os("TUI_TUI_HOME") {
         Some(dir) => Some(PathBuf::from(dir)),
@@ -80,11 +83,13 @@ pub fn home() -> Option<PathBuf> {
 }
 
 /// Where this version goes, under `home`.
+#[must_use]
 pub fn install_dir(home: &Path) -> PathBuf {
     home.join("engines").join(format!("stockfish-{VERSION}"))
 }
 
 /// The engine, if it has been downloaded before.
+#[must_use]
 pub fn installed() -> Option<PathBuf> {
     let path = install_dir(&home()?).join(BINARY);
     path.is_file().then_some(path)
@@ -102,6 +107,7 @@ pub enum Progress {
 
 impl Progress {
     /// A line for the status bar while it is under way.
+    #[must_use]
     pub fn describe(&self) -> String {
         match self {
             Progress::Fetching { got, of } => {
@@ -136,6 +142,10 @@ impl Drop for Download {
 
 impl Download {
     /// Starts fetching `build` into `home`, calling `wake` as it goes.
+    ///
+    /// # Errors
+    ///
+    /// If there is no async runtime to download on.
     pub fn start(build: Build, home: PathBuf, wake: Option<Waker>) -> Result<Self, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "downloading needs the async runtime".to_string())?;
@@ -159,18 +169,24 @@ impl Download {
         Ok(Self { progress, task })
     }
 
+    #[must_use]
     pub fn progress(&self) -> Progress {
         lock(&self.progress).clone()
     }
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Fetches, checks and unpacks `build` from `url`, and puts the engine in
 /// place under `home`. Everything happens in a staging directory beside the
 /// final one, which is only swapped in once the engine is known good.
+///
+/// # Errors
+///
+/// If the engine cannot be fetched, fails its check, or cannot be unpacked
+/// and put in place; the message says which, for the player.
 pub async fn install(
     url: &str,
     build: Build,

@@ -17,6 +17,7 @@ pub const CASTLING: CastlingMode = CastlingMode::Standard;
 ///
 /// `Move::to` reports the *rook* square for castling (the Chess960 convention),
 /// which is not where a player aims the cursor.
+#[must_use]
 pub fn ui_to(m: Move) -> Square {
     match m {
         Move::Castle { king, rook } => {
@@ -63,6 +64,7 @@ impl Default for Game {
 }
 
 impl Game {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             pos: Chess::default(),
@@ -76,19 +78,23 @@ impl Game {
         }
     }
 
+    #[must_use]
     pub fn turn(&self) -> Color {
         self.pos.turn()
     }
 
+    #[must_use]
     pub fn piece_at(&self, sq: Square) -> Option<Piece> {
         self.pos.board().piece_at(sq)
     }
 
+    #[must_use]
     pub fn over(&self) -> bool {
         self.resigned.is_some() || self.pos.is_game_over()
     }
 
     /// Every legal move starting from `from`.
+    #[must_use]
     pub fn moves_from(&self, from: Square) -> Vec<Move> {
         self.pos
             .legal_moves()
@@ -108,7 +114,10 @@ impl Game {
     pub fn nudge(&mut self, dfile: i32, drank: i32) {
         let file = (self.cursor.file() as i32 + dfile).clamp(0, 7);
         let rank = (self.cursor.rank() as i32 + drank).clamp(0, 7);
-        self.cursor = Square::from_coords(File::new(file as u32), Rank::new(rank as u32));
+        self.cursor = Square::from_coords(
+            File::new(file.cast_unsigned()),
+            Rank::new(rank.cast_unsigned()),
+        );
     }
 
     /// Act on the square under the cursor: pick a piece up, put it down, or
@@ -186,6 +195,10 @@ impl Game {
     }
 
     /// Apply a move received from the peer. Rejects anything not legal here.
+    ///
+    /// # Errors
+    ///
+    /// If `s` is not UCI, or not a legal move in this position.
     pub fn play_uci(&mut self, s: &str) -> Result<Move, String> {
         let uci: UciMove = s.parse().map_err(|_| format!("unparseable move {s:?}"))?;
         let m = uci
@@ -195,23 +208,27 @@ impl Game {
         Ok(m)
     }
 
+    #[must_use]
     pub fn to_uci(&self, m: Move) -> String {
         UciMove::from_move(m, CASTLING).to_string()
     }
 
     /// How many moves have been played, which is also the number of the
     /// position they led to.
+    #[must_use]
     pub fn plies(&self) -> usize {
         self.past.len()
     }
 
     /// The position `ply` moves into the game: 0 is the start, and
     /// [`Game::plies`] the position now.
+    #[must_use]
     pub fn position_at(&self, ply: usize) -> &Chess {
         self.past.get(ply).map_or(&self.pos, |(pos, _)| pos)
     }
 
     /// The move that led to the position `ply` moves in, if any did.
+    #[must_use]
     pub fn move_into(&self, ply: usize) -> Option<Move> {
         ply.checked_sub(1)
             .and_then(|i| self.past.get(i))
@@ -219,12 +236,14 @@ impl Game {
     }
 
     /// The position `ply` moves in, in the notation engines read.
+    #[must_use]
     pub fn fen_at(&self, ply: usize) -> String {
         Fen::from_position(self.position_at(ply), EnPassantMode::Legal).to_string()
     }
 
     /// The game as it stood `ply` moves in, for drawing: the position and
     /// the move into it, and nothing picked up.
+    #[must_use]
     pub fn at(&self, ply: usize) -> Game {
         let last = self
             .move_into(ply)
@@ -242,6 +261,7 @@ impl Game {
     }
 
     /// Pieces of `color` that have been captured, for the material tray.
+    #[must_use]
     pub fn captured(&self, color: Color) -> Vec<Role> {
         const START: [(Role, usize); 5] = [
             (Role::Queen, 1),
@@ -262,6 +282,7 @@ impl Game {
     }
 
     /// Material balance in pawns, from white's perspective.
+    #[must_use]
     pub fn material_edge(&self) -> i32 {
         let value = |r: Role| match r {
             Role::Pawn => 1,

@@ -17,6 +17,7 @@ pub enum Msg {
 }
 
 impl Msg {
+    #[must_use]
     pub fn line(&self) -> String {
         match self {
             Msg::Move(uci) => format!("move {uci}"),
@@ -28,6 +29,7 @@ impl Msg {
     /// `None` for anything unknown, which is ignored so the protocol can grow,
     /// and for anything malformed. The match is exact: `resign` with words
     /// after it is not a resignation, and a move is one word, not zero or two.
+    #[must_use]
     pub fn parse(line: &str) -> Option<Msg> {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
         match (word, rest) {

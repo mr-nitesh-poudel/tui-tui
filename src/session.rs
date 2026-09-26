@@ -50,7 +50,7 @@ const ONLINE_TIMEOUT: Duration = Duration::from_secs(30);
 const REACH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long an invite waits for its answer.
-pub const INVITE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const INVITE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Wrong codes the host puts up with before it stops listening. Each is one
 /// guess at the code, so this bounds the odds of an attacker getting in.
@@ -66,7 +66,7 @@ pub struct Game {
 }
 
 /// How pairing by code is going, for the UI to show.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
     /// The host's code is on the DHT and can be looked up.
     Listed,
@@ -118,6 +118,11 @@ impl std::fmt::Display for Unreachable {
 
 impl std::error::Error for Unreachable {}
 
+/// An iroh endpoint with `secret` as its identity, speaking our ALPN.
+///
+/// # Errors
+///
+/// If the endpoint cannot be bound.
 pub async fn bind(secret: SecretKey) -> Result<Endpoint> {
     Endpoint::builder(presets::N0)
         .secret_key(secret)
@@ -128,6 +133,11 @@ pub async fn bind(secret: SecretKey) -> Result<Endpoint> {
 }
 
 /// Find the host behind `code` and pair with it, accepting any of `games`.
+///
+/// # Errors
+///
+/// If the code leads nowhere, the host cannot be reached, or the handshake
+/// fails: a wrong code, a game this build does not have, or a refusal.
 pub async fn join(
     endpoint: &Endpoint,
     code: Code,
@@ -173,6 +183,10 @@ pub async fn join(
 
 /// Ask a friend to play `game`, and wait for their answer. `friend` is
 /// normally just their endpoint id, which iroh finds the rest of.
+///
+/// # Errors
+///
+/// If the friend cannot be reached, does not answer in time, or says no.
 pub async fn invite(
     endpoint: &Endpoint,
     friend: impl Into<EndpointAddr>,
@@ -204,6 +218,7 @@ pub async fn invite(
 
 /// A pairing error, told to the player. `who` is how to refer to the other
 /// side: a friend's name, or "your opponent".
+#[must_use]
 pub fn explain(err: &anyhow::Error, who: &str) -> String {
     if err.is::<Unreachable>() {
         return format!("{who} is not online");
@@ -294,6 +309,7 @@ struct Hosting {
 
 impl Listener {
     /// Answer everything that dials `endpoint` from now on. It starts busy.
+    #[must_use]
     pub fn start(endpoint: Endpoint, games: &[Game], events: UnboundedSender<Incoming>) -> Self {
         let inner = Arc::new(Inner {
             endpoint: endpoint.clone(),
@@ -500,7 +516,7 @@ impl Inner {
                 self.emit(Incoming::InviteGone(peer));
                 return Ok(());
             }
-            _ = tokio::time::sleep(INVITE_TIMEOUT) => {
+            () = tokio::time::sleep(INVITE_TIMEOUT) => {
                 self.emit(Incoming::InviteGone(peer));
                 handshake::refuse(&mut send, "timeout").await;
                 return Ok(());

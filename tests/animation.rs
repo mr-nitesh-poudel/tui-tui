@@ -70,7 +70,10 @@ fn a_move_starts_a_slide_that_ends_on_its_own() {
         .slide_at()
         .expect("the knight should be travelling");
     assert_eq!((slide.from, slide.to), (Square::G1, Square::F3));
-    assert_eq!(t, 0.0);
+    assert!(
+        t.abs() < f32::EPSILON,
+        "the slide should start at 0, not {t}"
+    );
 
     app.play.clock = Some(start + SLIDE / 2);
     assert!(app.is_animating());

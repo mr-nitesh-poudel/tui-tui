@@ -60,6 +60,7 @@ impl Dots {
     /// The dots a cell's symbol shows, as bit `x + 2y` for the dot at
     /// `(x, y)`. `None` if it is not one of this kind's characters. Public so
     /// a test can read pieces back out of a rendered buffer.
+    #[must_use]
     pub fn decode(self, symbol: &str) -> Option<u8> {
         let mut chars = symbol.chars();
         let c = chars.next()?;
@@ -68,9 +69,12 @@ impl Dots {
         }
         match self {
             // Blank as well as dotted cells, so an empty square decodes too.
-            Dots::Octant => OCTANTS.iter().position(|&o| o == c).map(|i| i as u8),
+            Dots::Octant => OCTANTS
+                .iter()
+                .position(|&o| o == c)
+                .and_then(|i| u8::try_from(i).ok()),
             Dots::Braille => {
-                let raw = u32::from(c).checked_sub(0x2800).filter(|&r| r <= 0xff)? as u8;
+                let raw = u8::try_from(u32::from(c).checked_sub(0x2800)?).ok()?;
                 Some(
                     (0..8)
                         .filter(|&k| raw & BRAILLE_BIT[k] != 0)
@@ -81,6 +85,7 @@ impl Dots {
     }
 
     /// The character that shows the dots in `bits`, numbered as in [`Dots::decode`].
+    #[must_use]
     pub fn encode(self, bits: u8) -> char {
         match self {
             Dots::Octant => OCTANTS[usize::from(bits)],
@@ -140,15 +145,22 @@ impl Piece {
 impl Shape for Piece {
     fn draw(&self, painter: &mut Painter) {
         let (x_bounds, y_bounds) = painter.bounds();
-        let (width, height) = (x_bounds[1] as i64 + 1, y_bounds[1] as i64 + 1);
-        let (w, h) = (i64::from(self.square.0), i64::from(self.square.1));
-        let (ax, ay) = (self.at.0.floor() as i64, self.at.1.floor() as i64);
-        let (fx, fy) = (self.at.0 - ax as f64, self.at.1 - ay as f64);
+        let (w, h) = (i32::from(self.square.0), i32::from(self.square.1));
+        let (fx, fy) = (self.at.0 - self.at.0.floor(), self.at.1 - self.at.1.floor());
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the canvas bounds and a piece's place on it are whole dots, well within range"
+        )]
+        let ((width, height), (ax, ay)) = (
+            (x_bounds[1] as usize + 1, y_bounds[1] as usize + 1),
+            (self.at.0.floor() as i32, self.at.1.floor() as i32),
+        );
 
         // Sample the silhouette on the square's own dot grid, offset by the
         // fraction of a dot the piece has travelled.
-        let solid = |x: i64, y: i64| {
-            let (ux, uy) = self.unit(x as f64 - fx, y as f64 - fy);
+        let solid = |x: i32, y: i32| {
+            let (ux, uy) = self.unit(f64::from(x) - fx, f64::from(y) - fy);
             let (ux, uy) = self.upright(ux, uy);
             inside(self.role, ux, uy)
         };
@@ -160,11 +172,13 @@ impl Shape for Piece {
                 if !solid(x, y) {
                     continue;
                 }
-                let (px, py) = (ax + x, ay + y);
-                if px < 0 || py < 0 || px >= width || py >= height {
+                let (Ok(px), Ok(py)) = (usize::try_from(ax + x), usize::try_from(ay + y)) else {
+                    continue;
+                };
+                if px >= width || py >= height {
                     continue;
                 }
-                painter.paint(px as usize, py as usize, self.colour);
+                painter.paint(px, py, self.colour);
             }
         }
     }
@@ -352,6 +366,10 @@ fn taper(x: f64, y: f64, y0: f64, y1: f64, bottom_half: f64, top_half: f64) -> b
 }
 
 /// Within `r` of the line from `a` to `b`.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the usual names for a point, a line and a radius"
+)]
 fn segment(x: f64, y: f64, a: (f64, f64), b: (f64, f64), r: f64) -> bool {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let t = (((x - a.0) * dx + (y - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);

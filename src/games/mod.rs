@@ -75,25 +75,30 @@ impl Kind {
     /// built, so an empty [`Kind::ALL`] fails to compile rather than panics.
     pub const DEFAULT: Kind = Kind::ALL[0];
 
+    #[must_use]
     pub const fn new(descriptor: &'static Descriptor) -> Self {
         Self(descriptor)
     }
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name
     }
 
     /// The name and protocol version the two sides agree on when pairing.
+    #[must_use]
     pub fn wire(self) -> session::Game {
         self.0.wire
     }
 
     /// The game a peer offered, if this build can play it.
+    #[must_use]
     pub fn from_wire(game: session::Game) -> Option<Kind> {
         Kind::ALL.iter().copied().find(|k| k.wire() == game)
     }
 
     /// A game named on the command line, in any case.
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Kind> {
         Kind::ALL
             .iter()
@@ -102,6 +107,7 @@ impl Kind {
     }
 
     /// What pairing offers and accepts: every game this build can play.
+    #[must_use]
     pub fn all_wire() -> Vec<session::Game> {
         Kind::ALL.iter().map(|k| k.wire()).collect()
     }

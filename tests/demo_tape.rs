@@ -40,12 +40,6 @@ fn the_tape_ends_in_checkmate() {
     down(&mut app, 4);
     enter(&mut app);
 
-    let moves: Vec<String> = app
-        .play
-        .game
-        .history
-        .iter()
-        .map(|m| m.to_string())
-        .collect();
+    let moves: Vec<String> = app.play.game.history.clone();
     assert!(app.play.game.pos.is_checkmate(), "not mate after {moves:?}");
 }

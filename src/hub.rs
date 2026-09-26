@@ -112,6 +112,10 @@ impl Hub {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the one match on what woke the loop, which reads best whole"
+    )]
     pub async fn run(
         &mut self,
         term: &mut Term,
@@ -170,7 +174,7 @@ impl Hub {
                     Some(wake) => wake,
                     None => return Ok(()),
                 },
-                _ = tokio::time::sleep(FRAME), if animating => continue,
+                () = tokio::time::sleep(FRAME), if animating => continue,
             };
 
             let next = match (wake, &mut screen) {
@@ -202,7 +206,6 @@ impl Hub {
                     m.table.on_wake();
                     Next::Stay
                 }
-                (Wake::Redraw, _) => Next::Stay,
                 (Wake::Heard(incoming), screen) => {
                     self.heard(incoming, screen);
                     Next::Stay
@@ -219,7 +222,8 @@ impl Hub {
                     m.table.on_net(ev);
                     Next::Stay
                 }
-                // Left over from a match that has been left.
+                // A redraw with no game to act on it, or news left over from
+                // a match that has been left.
                 _ => Next::Stay,
             };
             match next {
@@ -240,7 +244,7 @@ impl Hub {
         self.listener.idle();
         let mut lobby = Lobby::new();
         lobby.game = Kind::ALL.iter().position(|&k| k == self.game).unwrap_or(0);
-        lobby.name = self.profile.name.clone();
+        lobby.name.clone_from(&self.profile.name);
         lobby.guest = self.profile.is_guest();
         lobby.set_friends(self.profile.contacts.clone());
         lobby.notice = self.notice.take();
@@ -295,7 +299,7 @@ impl Hub {
             }
             Choice::Rename(name) => {
                 match self.profile.set_name(&name) {
-                    Ok(()) => lobby.name = self.profile.name.clone(),
+                    Ok(()) => lobby.name.clone_from(&self.profile.name),
                     Err(e) => lobby.notice = Some(format!("{e:#}")),
                 }
                 return Next::Stay;

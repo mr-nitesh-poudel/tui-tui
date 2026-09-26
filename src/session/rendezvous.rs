@@ -28,11 +28,11 @@ const SALT: &[u8] = b"tui-tui rendezvous v1";
 const RECORD: &str = "_session";
 
 /// How long a code stays good for after it is published.
-pub const CODE_LIFETIME: Duration = Duration::from_secs(60 * 60);
+pub const CODE_LIFETIME: Duration = Duration::from_hours(1);
 
 /// A joiner may have the code before the host's record has spread, so it
 /// keeps asking for this long before giving up.
-const LOOKUP_PATIENCE: Duration = Duration::from_secs(60);
+const LOOKUP_PATIENCE: Duration = Duration::from_mins(1);
 const LOOKUP_RETRY: Duration = Duration::from_secs(3);
 
 /// Stretch the code into the keypair both sides agree on.
@@ -56,6 +56,10 @@ fn client() -> Result<Client> {
 }
 
 /// Announce that `addr` is the host for `code`.
+///
+/// # Errors
+///
+/// If the record cannot be built or published to the DHT.
 pub async fn publish(code: Code, addr: &EndpointAddr) -> Result<()> {
     let keypair = keypair(code).await?;
     let id = format!("id={}", addr.id);
@@ -66,7 +70,11 @@ pub async fn publish(code: Code, addr: &EndpointAddr) -> Result<()> {
         txt.add_string(relay)?;
     }
     let packet = SignedPacket::builder()
-        .txt(RECORD.try_into()?, txt, CODE_LIFETIME.as_secs() as u32)
+        .txt(
+            RECORD.try_into()?,
+            txt,
+            u32::try_from(CODE_LIFETIME.as_secs())?,
+        )
         .sign(&keypair)?;
     client()?
         .publish(&packet)
@@ -76,6 +84,11 @@ pub async fn publish(code: Code, addr: &EndpointAddr) -> Result<()> {
 }
 
 /// Find the host behind `code`, waiting a while for its record to appear.
+///
+/// # Errors
+///
+/// If the DHT cannot be reached, no record turns up in time, or the one
+/// that does is stale or damaged.
 pub async fn resolve(code: Code) -> Result<EndpointAddr> {
     let key = keypair(code).await?.public_key();
     let client = client()?;

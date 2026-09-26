@@ -13,7 +13,9 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use super::{Entry, Field, Item, Lobby, Row};
 use crate::games::Kind;
-use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, centred, keycaps, keycaps_fit};
+use crate::ui::{
+    BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, cells, centred, keycaps, keycaps_fit,
+};
 
 /// Where the lobby's pieces sit. [`LobbyGeometry::rows`] lines up with
 /// [`Lobby::rows`], so what is drawn and what is clicked cannot drift apart.
@@ -141,11 +143,16 @@ impl Plan {
 }
 
 impl LobbyGeometry {
+    #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the lobby's layout, worked out top to bottom"
+    )]
     pub fn new(area: Rect, rows: &[Row]) -> Self {
         let [main, footer] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
         let slots = slots(rows);
-        let n = slots.len() as u16;
+        let n = cells(slots.len());
         let title_w = title_width() + 1;
         let plan = Plan::ALL
             .into_iter()
@@ -208,7 +215,7 @@ impl LobbyGeometry {
         let mut placed = Vec::with_capacity(rows.len());
         let mut friends_heading = None;
         for (k, slot) in slots.iter().enumerate() {
-            let at = line(k as u16);
+            let at = line(cells(k));
             match slot {
                 Slot::Row(_) => placed.push(at),
                 Slot::FriendsHeading => friends_heading = Some(at),
@@ -261,6 +268,7 @@ impl LobbyGeometry {
     }
 
     /// The row under a screen position, if any.
+    #[must_use]
     pub fn row_at(&self, x: u16, y: u16) -> Option<usize> {
         self.rows.iter().position(|r| r.contains(Position { x, y }))
     }
@@ -549,10 +557,10 @@ fn draw_footer(f: &mut Frame, area: Rect, lobby: &Lobby, rows: &[Row]) {
     } else {
         Some(format!("playing as {} ", lobby.name))
     };
-    let who_w = who.as_ref().map_or(0, |w| w.chars().count() as u16 + 2);
+    let who_w = who.as_ref().map_or(0, |w| cells(w.chars().count()) + 2);
     let mut left = vec![Span::raw(" ")];
     left.extend(keycaps_fit(keys, area.width.saturating_sub(who_w + 1)));
-    let used = Line::from(left.clone()).width() as u16;
+    let used = cells(Line::from(left.clone()).width());
     f.render_widget(Paragraph::new(Line::from(left)), area);
     if let Some(who) = who
         && used + who_w <= area.width
@@ -594,9 +602,9 @@ const LETTER_GAP: u16 = 2;
 fn title_width() -> u16 {
     let letters: u16 = TITLE
         .chars()
-        .map(|c| glyph(c).first().map_or(0, |r| r.len() as u16))
+        .map(|c| glyph(c).first().map_or(0, |r| cells(r.len())))
         .sum();
-    letters + LETTER_GAP * (TITLE.chars().count() as u16 - 1)
+    letters + LETTER_GAP * (cells(TITLE.chars().count()) - 1)
 }
 
 /// Every inked pixel of the title, from its top left.
@@ -608,15 +616,19 @@ fn title_pixels() -> Vec<(u16, u16)> {
         for (y, row) in rows.iter().enumerate() {
             for (dx, p) in row.chars().enumerate() {
                 if p == '#' {
-                    out.push((x + dx as u16, y as u16));
+                    out.push((x + cells(dx), cells(y)));
                 }
             }
         }
-        x += rows.first().map_or(0, |r| r.len() as u16) + LETTER_GAP;
+        x += rows.first().map_or(0, |r| cells(r.len())) + LETTER_GAP;
     }
     out
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "screen geometry, named as it is everywhere else here"
+)]
 fn draw_title(f: &mut Frame, g: &LobbyGeometry) {
     let version = format!("terminal games for two · v{}", env!("CARGO_PKG_VERSION"));
     if !g.big_title {
@@ -680,6 +692,7 @@ fn draw_title(f: &mut Frame, g: &LobbyGeometry) {
 /// cell is two pixels stacked, the top in the foreground of a `▀` and the
 /// bottom in its background.
 fn draw_floor(buf: &mut Buffer, area: Rect) {
+    const SAMPLES: u16 = 4;
     let depth = f64::from(area.height * 2);
     let centre = f64::from(area.width) / 2.0;
     // Squares at the front are this many cells across.
@@ -688,7 +701,6 @@ fn draw_floor(buf: &mut Buffer, area: Rect) {
     let focal = 2.0 * depth;
     // How much of a pixel is light square, sampled on a grid within it so
     // the far squares blur together rather than shimmer.
-    const SAMPLES: u16 = 4;
     let light_share = |px: u16, py: u16| {
         let mut light = 0u16;
         for sy in 0..SAMPLES {
@@ -698,13 +710,17 @@ fn draw_floor(buf: &mut Buffer, area: Rect) {
                 let x = f64::from(px) + (f64::from(sx) + 0.5) / f64::from(SAMPLES);
                 let wx = (x - centre) * camera / d;
                 let wz = camera * focal / d;
-                if (wx.floor() as i64 + wz.floor() as i64).rem_euclid(2) == 0 {
+                if (wx.floor() + wz.floor()).rem_euclid(2.0) < 1.0 {
                     light += 1;
                 }
             }
         }
         f32::from(light) / f32::from(SAMPLES * SAMPLES)
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "fractions from 0 to 1, which need no more than f32"
+    )]
     let pixel = |px: u16, py: u16| {
         let square = blend(FLOOR_DARK, FLOOR_LIGHT, light_share(px, py));
         // Fading into the dark at the horizon and towards either side, and
@@ -771,7 +787,7 @@ fn set_cursor(f: &mut Frame, line: Rect, offset: usize) {
     if line.width == 0 || line.height == 0 {
         return;
     }
-    let x = line.x.saturating_add(offset as u16);
+    let x = line.x.saturating_add(cells(offset));
     f.set_cursor_position(Position {
         x: x.min(line.right().saturating_sub(1)),
         y: line.y,
@@ -780,13 +796,13 @@ fn set_cursor(f: &mut Frame, line: Rect, offset: usize) {
 
 /// How long ago a Unix time was, in the loosest terms that still help.
 fn ago(then: u64) -> String {
+    const HOUR: u64 = 60 * 60;
+    const DAY: u64 = 24 * HOUR;
+    const TWO_DAYS: u64 = 2 * DAY;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let s = now.saturating_sub(then);
-    const HOUR: u64 = 60 * 60;
-    const DAY: u64 = 24 * HOUR;
-    const TWO_DAYS: u64 = 2 * DAY;
     match s {
         0..60 => "just now".into(),
         60..HOUR => format!("{}m ago", s / 60),

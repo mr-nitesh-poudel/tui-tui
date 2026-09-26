@@ -79,12 +79,14 @@ impl Score {
     /// has been mated.
     /// Mate in 0 has no sign to say who won, so it is scored as a mate
     /// already delivered: as good as it gets for the side that did it.
+    #[must_use]
     pub fn mated(white_to_move: bool) -> Self {
         Score::Cp(if white_to_move { -MATE } else { MATE })
     }
 
     /// In hundredths of a pawn, with a mate counting for more than any
     /// material, and a nearer mate for more than a farther one.
+    #[must_use]
     pub fn centipawns(self) -> i32 {
         match self {
             Score::Cp(cp) => cp,
@@ -95,13 +97,19 @@ impl Score {
 
     /// White's chances, from 0 to 1: how full the bar is. The curve is the
     /// one Lichess fitted to how games actually turn out.
+    #[must_use]
     pub fn white_share(self) -> f32 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "clamped to a mate's score, which f32 holds exactly"
+        )]
         let cp = self.centipawns().clamp(-MATE, MATE) as f32;
         1.0 / (1.0 + (-0.003_682_08 * cp).exp())
     }
 
     /// The score as it is written on the bar: `1.3`, `12`, `M4`, with no sign,
     /// since the end of the bar it is written at says who is ahead.
+    #[must_use]
     pub fn label(self) -> String {
         match self {
             Score::Mate(n) => format!("M{}", n.abs()),
@@ -112,6 +120,7 @@ impl Score {
     }
 
     /// The score with its sign, for the sidebar: `+1.3`, `-0.4`, `-M3`.
+    #[must_use]
     pub fn signed(self) -> String {
         match self {
             Score::Mate(n) if n < 0 => format!("-M{}", -n),
@@ -122,6 +131,7 @@ impl Score {
     }
 
     /// Whether white is ahead, or level.
+    #[must_use]
     pub fn white_ahead(self) -> bool {
         self.centipawns() >= 0
     }
@@ -167,6 +177,10 @@ impl Engine {
     /// something new to draw. Fails at once if there is no async runtime to
     /// run it on, or the program cannot be started; anything later shows up
     /// in [`Engine::status`].
+    ///
+    /// # Errors
+    ///
+    /// If there is no async runtime, or the program cannot be started.
     pub fn start(path: &Path, wake: Option<Waker>) -> Result<Self, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "analysis needs the async runtime".to_string())?;
@@ -212,10 +226,12 @@ impl Engine {
         let _ = self.asks.send(Ask::Grade(fens));
     }
 
+    #[must_use]
     pub fn eval(&self, fen: &str) -> Option<Eval> {
         lock(&self.evals).get(fen).cloned()
     }
 
+    #[must_use]
     pub fn status(&self) -> Status {
         lock(&self.status).clone()
     }
@@ -224,7 +240,7 @@ impl Engine {
 /// A poisoned lock only means a panic elsewhere mid-update, and what it holds
 /// is still usable.
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Where an engine is, if there is one: `TUITUI_ENGINE` if it is set, else

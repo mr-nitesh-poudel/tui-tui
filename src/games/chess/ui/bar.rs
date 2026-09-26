@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::games::chess::analysis::Thinking;
 use crate::games::chess::app::App;
-use crate::ui::blend;
+use crate::ui::{blend, cells};
 
 const WHITE: Color = Color::Rgb(236, 234, 228);
 const BLACK: Color = Color::Rgb(44, 41, 38);
@@ -30,6 +30,12 @@ pub(super) fn draw_bar(buf: &mut Buffer, area: Rect, app: &App) {
     };
 
     let pixels = usize::from(area.height) * 2;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "a share from 0 to 1 of a column of pixels is a count of them"
+    )]
     let lit = ((app.bar_share().clamp(0.0, 1.0) * pixels as f32).round() as usize).min(pixels);
     // White's end is at the bottom unless the board is turned round.
     let is_white = |p: usize| {
@@ -60,7 +66,7 @@ pub(super) fn draw_bar(buf: &mut Buffer, area: Rect, app: &App) {
     } else {
         area.y
     };
-    let text_w = label.chars().count() as u16;
+    let text_w = cells(label.chars().count());
     let x = area.x + area.width.saturating_sub(text_w) / 2;
     let (ink, paper) = if at_white {
         (BLACK, WHITE)
@@ -68,7 +74,7 @@ pub(super) fn draw_bar(buf: &mut Buffer, area: Rect, app: &App) {
         (WHITE, BLACK)
     };
     for (i, c) in label.chars().enumerate() {
-        let at = Position::new(x + i as u16, row);
+        let at = Position::new(x + cells(i), row);
         if area.contains(at) {
             buf[at].set_char(c).set_style(
                 Style::default()

@@ -12,6 +12,7 @@
 //! A second copy that finds the lock taken runs as a guest: a throwaway key,
 //! and nothing saved.
 
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,10 @@ pub struct Profile {
 
 impl Profile {
     /// The profile in the usual place.
+    ///
+    /// # Errors
+    ///
+    /// If there is no config directory, or [`Profile::load_from`] fails.
     pub fn load() -> Result<Self> {
         let dir = match std::env::var_os("TUI_TUI_HOME") {
             Some(dir) => PathBuf::from(dir),
@@ -62,6 +67,13 @@ impl Profile {
         Self::load_from(&dir)
     }
 
+    /// The profile kept in `dir`, making it if there is none.
+    ///
+    /// # Errors
+    ///
+    /// If `dir` cannot be made or locked, or the key or profile in it cannot
+    /// be read or created. A profile already locked by another copy is not an
+    /// error: that copy gets a guest profile instead.
     pub fn load_from(dir: &Path) -> Result<Self> {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
@@ -91,6 +103,7 @@ impl Profile {
     }
 
     /// A throwaway identity that saves nothing.
+    #[must_use]
     pub fn guest() -> Self {
         Self {
             dir: None,
@@ -101,18 +114,26 @@ impl Profile {
         }
     }
 
+    #[must_use]
     pub fn is_guest(&self) -> bool {
         self.dir.is_none()
     }
 
+    #[must_use]
     pub fn id(&self) -> EndpointId {
         self.secret.public()
     }
 
+    #[must_use]
     pub fn contact(&self, id: EndpointId) -> Option<&Contact> {
         self.contacts.iter().find(|c| c.id == id)
     }
 
+    /// Go by `name` from now on.
+    ///
+    /// # Errors
+    ///
+    /// If `name` has no letter or digit in it, or the profile cannot be saved.
     pub fn set_name(&mut self, name: &str) -> Result<()> {
         match clean_name(name) {
             Some(name) => self.name = name,
@@ -123,6 +144,10 @@ impl Profile {
 
     /// Note a game with `id`, adding them if they are new and taking the name
     /// they go by now.
+    ///
+    /// # Errors
+    ///
+    /// If the profile cannot be saved.
     pub fn played(&mut self, id: EndpointId, name: &str) -> Result<()> {
         let name = clean_name(name).unwrap_or_else(|| id.fmt_short().to_string());
         let now = SystemTime::now()
@@ -145,6 +170,11 @@ impl Profile {
         self.save()
     }
 
+    /// Drop `id` from the contacts.
+    ///
+    /// # Errors
+    ///
+    /// If the profile cannot be saved.
     pub fn forget(&mut self, id: EndpointId) -> Result<()> {
         self.contacts.retain(|c| c.id != id);
         self.save()
@@ -178,7 +208,10 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let key = SecretKey::generate();
-            let hex: String = key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            let hex = key.to_bytes().iter().fold(String::new(), |mut s, b| {
+                let _ = write!(s, "{b:02x}");
+                s
+            });
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]

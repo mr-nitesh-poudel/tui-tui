@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use super::Ctx;
-use crate::ui::{CURSOR, MUTED};
+use crate::ui::{CURSOR, MUTED, cells};
 
 /// The word a chat line starts with on the wire.
 const WORD: &str = "chat";
@@ -62,12 +62,14 @@ pub struct Chat {
 impl Chat {
     /// The text of a chat line from the peer, cleaned. `None` for a line
     /// that is not chat, or has nothing readable in it.
+    #[must_use]
     pub fn parse(line: &str) -> Option<Option<String>> {
         let text = line.strip_prefix(WORD)?.strip_prefix(' ')?;
         Some(clean(text))
     }
 
     /// The line that carries `text` to the peer.
+    #[must_use]
     pub fn line(text: &str) -> String {
         format!("{WORD} {text}")
     }
@@ -125,11 +127,10 @@ impl Chat {
                 self.scroll = 0;
                 return Some(text);
             }
-            KeyCode::Backspace if ctrl => self.delete_word(),
+            KeyCode::Backspace | KeyCode::Char('w') if ctrl => self.delete_word(),
             KeyCode::Backspace => {
                 self.input.pop();
             }
-            KeyCode::Char('w') if ctrl => self.delete_word(),
             KeyCode::Char('u') if ctrl => self.input.clear(),
             KeyCode::Char(c) if !ctrl && !c.is_control() => {
                 if self.input.chars().count() < MESSAGE_MAX {
@@ -157,6 +158,7 @@ impl Chat {
 /// whitespace squeezed to one space, and no longer than [`MESSAGE_MAX`].
 /// `None` if nothing is left. What the peer sends is cleaned here, where it
 /// arrives, rather than wherever it is drawn.
+#[must_use]
 pub fn clean(text: &str) -> Option<String> {
     let cleaned: String = text
         .chars()
@@ -201,7 +203,7 @@ pub fn draw(f: &mut Frame, area: Rect, ctx: &Ctx) {
     if composer.len() > room {
         composer.drain(..composer.len() - room);
     }
-    let composer_h = composer.len() as u16;
+    let composer_h = cells(composer.len());
     let log_h = inner.height - composer_h - 1;
 
     let log = log_lines(ctx, width);
@@ -212,7 +214,7 @@ pub fn draw(f: &mut Frame, area: Rect, ctx: &Ctx) {
     let end = log.len() - scroll;
     let shown: Vec<Line> = log[end.saturating_sub(visible)..end].to_vec();
     // Messages settle at the bottom, next to where they are typed.
-    let pad = log_h.saturating_sub(shown.len() as u16);
+    let pad = log_h.saturating_sub(cells(shown.len()));
     f.render_widget(
         Paragraph::new(shown),
         Rect {

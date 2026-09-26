@@ -79,12 +79,14 @@ pub struct Ctx {
 
 impl Ctx {
     /// Nobody to connect to: both players are here.
+    #[must_use]
     pub fn local() -> Self {
         Self::new(Conn::Local, None)
     }
 
     /// Someone who is not connected yet. `code` is what to show for them to
     /// join with, when hosting.
+    #[must_use]
     pub fn new(conn: Conn, code: Option<Code>) -> Self {
         Self {
             conn,
@@ -143,8 +145,7 @@ impl Ctx {
             return name.clone();
         }
         self.peer
-            .map(|p| p.fmt_short().to_string())
-            .unwrap_or_else(|| "—".into())
+            .map_or_else(|| "—".into(), |p| p.fmt_short().to_string())
     }
 
     /// Asks for the share code to go on the clipboard, while it is still of

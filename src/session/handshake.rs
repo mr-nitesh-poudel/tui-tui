@@ -30,6 +30,7 @@
 //! host    ok                ...or `no declined`, `no busy`, `no unknown`...
 //! ```
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use super::lines::Lines;
@@ -92,6 +93,11 @@ enum Role {
 
 /// The host's half of pairing by code, from just after the joiner's opening
 /// `pake` line. Returns the joiner's name.
+///
+/// # Errors
+///
+/// If the joiner has the wrong code, the stream fails, or they send
+/// something other than the handshake.
 pub async fn host_code(
     send: &mut SendStream,
     lines: &mut Reader,
@@ -126,6 +132,11 @@ pub async fn host_code(
 
 /// The joiner's half of pairing by code. Returns whichever of `games` the host
 /// turned out to be playing, and the host's name.
+///
+/// # Errors
+///
+/// If the code is wrong, the host is playing none of `games`, the stream
+/// fails, or the host sends something other than the handshake.
 pub async fn join_code(
     send: &mut SendStream,
     lines: &mut Reader,
@@ -153,19 +164,21 @@ pub async fn join_code(
     let their_name = hear_name(lines).await?;
 
     let offer = hear(lines, "game").await?;
-    match parse_game(&offer, games) {
-        Some(game) => {
-            say(send, "ok").await?;
-            Ok((game, their_name))
-        }
-        None => {
-            refuse(send, "unsupported-game").await;
-            bail!("your opponent is playing {offer}, which this build does not have")
-        }
+    if let Some(game) = parse_game(&offer, games) {
+        say(send, "ok").await?;
+        Ok((game, their_name))
+    } else {
+        refuse(send, "unsupported-game").await;
+        bail!("your opponent is playing {offer}, which this build does not have")
     }
 }
 
 /// The guest's half of an invite. Returns the host's name once it says yes.
+///
+/// # Errors
+///
+/// If the host says no, the stream fails, or it sends something other than
+/// the handshake.
 pub async fn invite(
     send: &mut SendStream,
     lines: &mut Reader,
@@ -182,6 +195,11 @@ pub async fn invite(
 
 /// The host's first look at an invite, just after its opening line: who says
 /// they are asking, and to play what.
+///
+/// # Errors
+///
+/// If the stream fails, or the guest sends something other than a name and
+/// a game.
 pub async fn read_invite(lines: &mut Reader, games: &[Game]) -> Result<(String, Option<Game>)> {
     let name = hear_name(lines).await?;
     let offer = hear(lines, "game").await?;
@@ -189,6 +207,10 @@ pub async fn read_invite(lines: &mut Reader, games: &[Game]) -> Result<(String, 
 }
 
 /// The host saying yes to an invite.
+///
+/// # Errors
+///
+/// If the stream fails.
 pub async fn accept_invite(send: &mut SendStream, name: &str) -> Result<()> {
     say(send, &format!("name {name}")).await?;
     say(send, "ok").await
@@ -256,6 +278,12 @@ async fn hear_name(lines: &mut Reader) -> Result<String> {
     Ok(clean_name(&name).unwrap_or_default())
 }
 
+/// The next line, which should start with `verb`, less that word.
+///
+/// # Errors
+///
+/// If the stream fails or ends, the peer says `no`, or it sends some other
+/// verb than `verb`.
 pub async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
     let line = lines
         .next_line()
@@ -273,7 +301,10 @@ pub async fn hear(lines: &mut Reader, verb: &str) -> Result<String> {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 fn unhex(s: &str) -> Result<Vec<u8>> {

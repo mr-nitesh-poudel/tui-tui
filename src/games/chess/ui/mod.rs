@@ -64,6 +64,7 @@ pub enum PieceStyle {
 }
 
 impl PieceStyle {
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             PieceStyle::Blocks => PieceStyle::BigLetter,
@@ -122,6 +123,7 @@ pub struct Geometry {
 
 impl Geometry {
     /// The layout for a game with nobody to talk to.
+    #[must_use]
     pub fn new(area: Rect) -> Self {
         Self::layout(area, false, false)
     }
@@ -144,6 +146,7 @@ impl Geometry {
     /// the room to the board's right; the board is never shrunk for it, so
     /// where there is not room it goes under the moves instead. The bar, if
     /// `bar`, goes between the sidebar and the board.
+    #[must_use]
     pub fn layout(area: Rect, chat: bool, bar: bool) -> Self {
         let bar_w = if bar { BAR_W } else { 0 };
         let [main, footer] =
@@ -253,6 +256,7 @@ impl Geometry {
     }
 
     /// The square under a screen position, if any.
+    #[must_use]
     pub fn square_at(&self, x: u16, y: u16, flipped: bool) -> Option<Square> {
         let (cw, ch) = self.cell;
         let col = x.checked_sub(self.grid.x)? / cw;
@@ -269,6 +273,7 @@ impl Geometry {
     }
 
     /// The promotion choice under a screen position, if any.
+    #[must_use]
     pub fn promo_at(&self, x: u16, y: u16) -> Option<usize> {
         if y <= self.promo.y || y + 1 >= self.promo.bottom() {
             return None;

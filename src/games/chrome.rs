@@ -9,7 +9,7 @@ use ratatui::widgets::Paragraph;
 
 use super::{Conn, Ctx};
 use crate::clipboard::Copied;
-use crate::ui::{CAPTURE, CURSOR, MUTED, SELECTED, keycaps, keycaps_fit};
+use crate::ui::{CAPTURE, CURSOR, MUTED, SELECTED, cells, keycaps, keycaps_fit};
 
 /// A few lines on the connection while there is no opponent to show: the
 /// code to share while hosting, who we are waiting on, or what went wrong.
@@ -110,7 +110,7 @@ pub fn footer(
         let asking = Style::default().fg(CAPTURE).add_modifier(Modifier::BOLD);
         spans.push(Span::styled(format!("{text}   "), asking));
     }
-    let used = Line::from(spans.clone()).width() as u16;
+    let used = cells(Line::from(spans.clone()).width());
     spans.extend(keycaps_fit(keys, area.width.saturating_sub(used)));
     f.render_widget(Paragraph::new(Line::from(spans).centered()), area);
 }

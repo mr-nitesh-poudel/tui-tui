@@ -36,6 +36,7 @@ pub enum Item {
 }
 
 impl Item {
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Item::Game => "Game",
@@ -125,6 +126,7 @@ impl Default for Lobby {
 }
 
 impl Lobby {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             // Past the game, onto hosting: most of the time the game is
@@ -159,19 +161,21 @@ impl Lobby {
     }
 
     /// The game hosting, a local game or a challenge would start.
+    #[must_use]
     pub fn game(&self) -> Kind {
         Kind::ALL[self.game % Kind::ALL.len()]
     }
 
     /// Whether the selection is on the game row, where the arrows change it.
+    #[must_use]
     pub fn on_game(&self) -> bool {
         self.rows().get(self.selected) == Some(&Row::Item(Item::Game))
     }
 
     /// Steps through the games, wrapping round at either end.
     fn next_game(&mut self, step: isize) {
-        let n = Kind::ALL.len() as isize;
-        self.game = (self.game as isize + step).rem_euclid(n) as usize;
+        let n = Kind::ALL.len().cast_signed();
+        self.game = (self.game.cast_signed() + step).rem_euclid(n) as usize;
     }
 
     fn row_of(&self, item: Item) -> usize {
@@ -397,6 +401,7 @@ impl Lobby {
     }
 
     /// What the word being typed would become if Tab were pressed now.
+    #[must_use]
     pub fn completion(&self) -> Option<&'static str> {
         let parts = self.parts();
         // The first part is the number, which has nothing to complete.
@@ -425,6 +430,7 @@ impl Lobby {
         }
     }
 
+    #[must_use]
     pub fn entry(&self) -> Entry {
         if self.input.is_empty() {
             return Entry::Empty;

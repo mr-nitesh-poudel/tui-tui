@@ -25,6 +25,11 @@ pub struct Code {
 
 impl Code {
     /// A fresh code from the operating system's random source.
+    ///
+    /// # Panics
+    ///
+    /// If the operating system has no random source to draw from.
+    #[must_use]
     pub fn generate() -> Self {
         let mut bytes = [0u8; 16];
         loop {
@@ -121,6 +126,7 @@ pub fn is_prefix(partial: &str) -> bool {
 }
 
 /// Whether `part` names a code word, the same way parsing a code decides it.
+#[must_use]
 pub fn is_word(part: &str) -> bool {
     lookup(part).is_some()
 }
@@ -134,5 +140,5 @@ fn lookup(part: &str) -> Option<u16> {
             .then(|| WORDS.iter().position(|w| w.starts_with(part)))
             .flatten()
     };
-    exact.or_else(prefix).map(|i| i as u16)
+    exact.or_else(prefix).and_then(|i| u16::try_from(i).ok())
 }

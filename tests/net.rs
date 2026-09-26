@@ -162,7 +162,7 @@ async fn a_code_stops_working_when_the_host_moves_on() {
 /// The whole path a player takes: publish, look the code up, pair. Needs the
 /// internet; run it with `cargo test -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs the internet"]
 async fn pair_by_code_over_the_dht() {
     let code = Code::generate();
     let mut alice = player().await;

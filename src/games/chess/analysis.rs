@@ -61,6 +61,7 @@ impl Grade {
         }
     }
 
+    #[must_use]
     pub fn symbol(self) -> &'static str {
         match self {
             Grade::Inaccuracy => "?!",

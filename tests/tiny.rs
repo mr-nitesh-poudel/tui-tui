@@ -69,7 +69,11 @@ fn games() -> Vec<(&'static str, Table<App>)> {
     for m in ["f2f3", "e7e5", "g2g4", "d8h4"] {
         mated.play.game.play_uci(m).unwrap();
     }
-    mated.play.ended = Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
+    mated.play.ended = Some(
+        std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(10))
+            .unwrap(),
+    );
     out.push(("mated", mated));
     let mut promo = Table::local(App::local());
     for m in [
@@ -130,6 +134,9 @@ fn games() -> Vec<(&'static str, Table<App>)> {
 #[cfg(unix)]
 fn analysing() -> Table<App> {
     use std::os::unix::fs::PermissionsExt;
+    // The engine's task outlives this function on a runtime kept for the
+    // rest of the test run.
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     let dir = std::env::temp_dir().join(format!("tuitui-{}-tiny", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("engine");
@@ -137,9 +144,6 @@ fn analysing() -> Table<App> {
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    // The engine's task outlives this function on a runtime kept for the
-    // rest of the test run.
-    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     let runtime = RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap());
     let _entered = runtime.enter();
     let mut t = Table::local(App::local());

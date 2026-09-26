@@ -50,6 +50,7 @@ impl Ending {
         }
     }
 
+    #[must_use]
     pub fn length(self) -> Duration {
         let (a, b, c) = self.acts();
         a + b + c
@@ -110,6 +111,10 @@ pub struct Slide {
     pub start: Instant,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags on the screen's state, not one state spelled out in bools"
+)]
 pub struct App {
     pub game: Game,
     /// The side we are allowed to move, or `None` when sharing a keyboard.
@@ -147,6 +152,7 @@ pub struct App {
 }
 
 impl App {
+    #[must_use]
     pub fn local() -> Self {
         Self {
             game: Game::new(),
@@ -172,6 +178,7 @@ impl App {
     }
 
     /// A game at `seat`. The host plays white.
+    #[must_use]
     pub fn new(seat: Seat) -> Self {
         let me = match seat {
             Seat::Local => return Self::local(),
