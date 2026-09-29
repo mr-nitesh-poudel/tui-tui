@@ -11,7 +11,7 @@ shared, so more can follow.
 ![two players, one keyboard, and a fool's mate](demo.gif)
 
 ```
- tui-tui  v0.3.0                                    playing as ace
+ tui-tui  v0.4.0                                    playing as ace
 
    ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  ╭───────────────────────────╮
    ┃   ▓▓▓▓▓░░░░░▓▓▓▓▓░░░░░    ┃  │     S   L   A   T   E     │
