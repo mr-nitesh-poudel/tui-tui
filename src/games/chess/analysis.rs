@@ -4,8 +4,9 @@
 //!
 //! An engine's opinion is advice, so it is not on offer while a game against
 //! someone else is still being played: only in hot-seat, where both players
-//! are here, or once the game is decided. Looking back through the moves is
-//! always allowed; the moves list shows them anyway.
+//! are here, against the bot, which it cannot help, or once the game is
+//! decided. Looking back through the moves is always allowed; the moves list
+//! shows them anyway.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -86,10 +87,10 @@ pub enum Thinking {
 }
 
 impl App {
-    /// Whether the engine may be asked: in hot-seat, or once the game is
-    /// decided.
+    /// Whether the engine may be asked: in hot-seat, against the bot, or
+    /// once the game is decided.
     pub fn can_analyse(&self) -> bool {
-        self.me.is_none() || !self.in_play()
+        self.me.is_none() || self.versus.is_some() || !self.in_play()
     }
 
     /// Turns the engine on, starting it if there is one, or off, stopping it.
@@ -140,17 +141,22 @@ impl App {
         }
     }
 
-    /// Background work has news: a download that has finished starts the
-    /// engine it brought, and one that failed says why.
+    /// Background work has news: the bot may have chosen its move, a
+    /// download that has finished starts the engine it brought, and one that
+    /// failed says why.
     pub fn on_wake(&mut self, ctx: &mut Ctx) {
+        self.bot_moves(ctx);
         let Some(progress) = self.download.as_ref().map(Download::progress) else {
             return;
         };
         match progress {
             Progress::Done(path) => {
                 self.download = None;
-                // The game may have moved on while it downloaded.
-                if self.can_analyse() {
+                // Fetched to play the bot, or to analyse; the game may have
+                // moved on from analysis while it downloaded.
+                if self.choosing().is_some() {
+                    self.start_bot(&path, ctx);
+                } else if self.can_analyse() {
                     self.start_engine(&path, ctx);
                 }
             }

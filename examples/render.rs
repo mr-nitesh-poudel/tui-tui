@@ -155,6 +155,19 @@ fn main() {
     dump("chatting", &chatting, 140, 40);
     dump("chatting, classic 80x24", &chatting, 80, 24);
 
+    // Picking how strong the bot plays, and then playing it.
+    let mut bot = Table::local(App::against_bot());
+    bot.play.piece_style = PieceStyle::Art;
+    dump("a bot: picking its strength", &bot, 120, 40);
+    dump("a bot: picking, classic 80x24", &bot, 80, 24);
+    if let Some(v) = bot.play.versus.as_mut() {
+        v.choosing = None;
+    }
+    for m in ["e2e4", "c7c5", "g1f3"] {
+        bot.play.game.play_uci(m).unwrap();
+    }
+    dump("a bot: its move", &bot, 120, 40);
+
     let mut lobby = Lobby::new();
     lobby.name = "ace".into();
     dump_lobby("lobby, first run", &lobby, 80, 30);

@@ -11,7 +11,7 @@
 //! 1. A module here, say `games/go/`, with a type that implements [`Play`].
 //! 2. A [`Descriptor`] in it: the game's name, a line about it, its wire id
 //!    and version, a thumbnail for its card in the lobby, and how to start
-//!    one at a [`Seat`].
+//!    one at a [`Seat`], and against the computer if it can be played so.
 //! 3. One line in [`Kind::ALL`].
 //!
 //! The lobby, the command line, pairing and invites pick it up from there.
@@ -70,12 +70,19 @@ pub struct Descriptor {
     /// Played by one player at [`Seat::Local`], rather than two sharing the
     /// keyboard.
     pub alone: bool,
+    /// A new game against the computer, at a table with this connection, for
+    /// a game that has one to offer. The lobby offers it beside hosting and
+    /// playing locally.
+    pub bot: Option<StartBot>,
     /// Draws a picture of the game into the area given, for its card in the
     /// lobby. It must cope with any size, down to nothing, and stay inside.
     pub thumb: fn(&mut Buffer, Rect),
     /// A new game, sat at `seat`, at a table with this connection.
     pub start: fn(Seat, Ctx) -> Box<Table<dyn Play>>,
 }
+
+/// Starts a game against the computer, at a table with this connection.
+pub type StartBot = fn(Ctx) -> Box<Table<dyn Play>>;
 
 /// One of the games there is to play.
 #[derive(Clone, Copy)]
@@ -118,6 +125,17 @@ impl Kind {
     #[must_use]
     pub fn alone(self) -> bool {
         self.0.alone
+    }
+
+    /// Whether the game can be played against the computer.
+    #[must_use]
+    pub fn has_bot(self) -> bool {
+        self.0.bot.is_some()
+    }
+
+    /// A new game of this kind against the computer, if it has one.
+    pub fn start_bot(self, ctx: Ctx) -> Option<Box<Table<dyn Play>>> {
+        self.0.bot.map(|start| start(ctx))
     }
 
     /// The name and protocol version the two sides agree on when pairing.

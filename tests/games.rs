@@ -64,6 +64,21 @@ fn every_game_starts_as_itself_at_every_seat() {
 }
 
 #[test]
+fn a_game_with_a_bot_starts_one_as_itself() {
+    for &kind in Kind::ALL {
+        match kind.start_bot(Ctx::local()) {
+            Some(table) => {
+                assert!(kind.has_bot());
+                assert_eq!(table.kind(), kind);
+                // Picking the strength first: nothing to walk out on yet.
+                assert!(!table.play.in_play(), "{kind:?}");
+            }
+            None => assert!(!kind.has_bot(), "{kind:?}"),
+        }
+    }
+}
+
+#[test]
 fn the_seat_decides_the_side() {
     let host = App::new(Seat::Host);
     let guest = App::new(Seat::Guest);

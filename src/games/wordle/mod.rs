@@ -25,6 +25,7 @@ pub const DESCRIPTOR: Descriptor = Descriptor {
     blurb: "race to a word, or solo",
     wire: GAME,
     alone: true,
+    bot: None,
     thumb: ui::thumb,
     start,
 };

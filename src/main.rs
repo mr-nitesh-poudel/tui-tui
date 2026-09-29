@@ -4,6 +4,7 @@
 //! tuitui                 the lobby: pick a game, host, join, challenge a friend
 //! tuitui play [game]     the same, on the game named
 //! tuitui local [game]    two players, one keyboard (or one, for wordle)
+//! tuitui bot [game]      play the computer, for a game that has one
 //! tuitui host [game]     wait for an opponent, and go first
 //! tuitui join <code>     join with an opponent's code
 //! ```
@@ -36,6 +37,8 @@ usage:
   tuitui play [game]      the same, starting on the game named
   tuitui local [game]     play locally: two players on one keyboard,
                           or on your own for a game like wordle
+  tuitui bot [game]       play the computer, at a strength you choose
+                          (chess)
   tuitui host [game]      host a game and get a code to share
   tuitui join <code>      join a game with the code your opponent sent,
                           e.g. tuitui join 42-tiger-marble-ocean
@@ -102,6 +105,14 @@ fn parse(args: &[&str]) -> Result<Start, Say> {
     let (game, choice) = match verb {
         "" | "play" => (named()?, None),
         "local" => (named()?, Some(Choice::Local)),
+        "bot" => {
+            let game = named()?;
+            if !game.has_bot() {
+                let name = game.name().to_lowercase();
+                return Err(Say::Wrong(format!("{name} has no bot to play")));
+            }
+            (game, Some(Choice::Bot))
+        }
         "host" => (named()?, Some(Choice::Host)),
         // The host decides the game, so joining never names one. Spaces are
         // fine as well as dashes, as in `join 42 tiger marble ocean`.
@@ -206,6 +217,8 @@ mod tests {
     #[test]
     fn the_verbs_start_what_they_say() {
         assert_eq!(start(&["local"]).choice, Some(Choice::Local));
+        assert_eq!(start(&["bot"]).choice, Some(Choice::Bot));
+        assert_eq!(start(&["bot", "chess"]).choice, Some(Choice::Bot));
         assert_eq!(start(&["host"]).choice, Some(Choice::Host));
         let code = "42-tiger-marble-ocean";
         assert_eq!(
@@ -234,6 +247,7 @@ mod tests {
         for args in [
             &["wat"][..],
             &["local", "draughts"][..],
+            &["bot", "wordle"][..],
             &["host", "chess", "extra"][..],
             &["join"][..],
             &["join", "nonsense"][..],

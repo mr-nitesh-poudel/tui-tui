@@ -126,6 +126,19 @@ fn games() -> Vec<(&'static str, Table<App>)> {
     let mut quitting = Table::local(App::local());
     quitting.ctx.confirm_leave = true;
     out.push(("quitting", quitting));
+    // Picking the bot's strength, and then playing it from black's side.
+    out.push(("choosing a bot", Table::local(App::against_bot())));
+    let mut asking = Table::local(App::against_bot());
+    asking.play.offer_download = true;
+    out.push(("asking to fetch a bot", asking));
+    let mut against = Table::local(App::against_bot());
+    if let Some(v) = against.play.versus.as_mut() {
+        v.choosing = None;
+    }
+    against.play.me = Some(shakmaty::Color::Black);
+    against.play.flipped = true;
+    against.play.game.play_uci("e2e4").unwrap();
+    out.push(("playing a bot", against));
     out
 }
 

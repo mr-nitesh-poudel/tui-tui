@@ -1,12 +1,14 @@
 //! Chess: the rules ([`rules`]), the state and what keys mean ([`app`]), the
 //! board ([`ui`], with pieces drawn by [`canvas`]), and what the two sides
-//! say to each other ([`protocol`]).
+//! say to each other ([`protocol`]). An engine analyses ([`analysis`]), or
+//! plays the other side ([`bot`]).
 //!
 //! This is the whole of chess's connection to the rest of the program: a
 //! [`Descriptor`] for the registry, and [`Play`] for the table.
 
 pub mod analysis;
 pub mod app;
+pub mod bot;
 pub mod canvas;
 pub mod download;
 pub mod engine;
@@ -28,6 +30,7 @@ pub const DESCRIPTOR: Descriptor = Descriptor {
     blurb: "two players, one board",
     wire: GAME,
     alone: false,
+    bot: Some(against_bot),
     thumb: ui::thumb,
     start,
 };
@@ -36,6 +39,10 @@ pub const KIND: Kind = Kind::new(&DESCRIPTOR);
 
 fn start(seat: Seat, ctx: Ctx) -> Box<Table<dyn Play>> {
     Box::new(Table::new(ctx, App::new(seat)))
+}
+
+fn against_bot(ctx: Ctx) -> Box<Table<dyn Play>> {
+    Box::new(Table::new(ctx, App::against_bot()))
 }
 
 impl Play for App {

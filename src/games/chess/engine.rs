@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::games::Waker;
@@ -182,16 +182,6 @@ impl Engine {
     ///
     /// If there is no async runtime, or the program cannot be started.
     pub fn start(path: &Path, wake: Option<Waker>) -> Result<Self, String> {
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_| "analysis needs the async runtime".to_string())?;
-        let _guard = runtime.enter();
-        let mut child = Command::new(path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("could not start {}: {e}", path.display()))?;
         let (asks, asked) = unbounded_channel();
         let engine = Self {
             asks,
@@ -200,19 +190,13 @@ impl Engine {
         };
         let (evals, status) = (engine.evals.clone(), engine.status.clone());
         let wake = wake.unwrap_or_else(|| Arc::new(|| {}));
-        runtime.spawn(async move {
-            let result = drive(&mut child, asked, &evals, &status, &wake).await;
-            // However it ended, the process ends too, and is waited for so
-            // it does not linger as a zombie: a moment to leave on its own
-            // after `quit`, and then it is killed.
-            if tokio::time::timeout(LEAVE, child.wait()).await.is_err() {
-                let _ = child.kill().await;
-            }
-            if let Err(why) = result {
-                *lock(&status) = Status::Failed(why);
-                wake();
-            }
-        });
+        launch(
+            path,
+            "analysis",
+            engine.status.clone(),
+            wake.clone(),
+            move |stdin, lines| async move { drive(stdin, lines, asked, &evals, &status, &wake).await },
+        )?;
         Ok(engine)
     }
 
@@ -239,8 +223,85 @@ impl Engine {
 
 /// A poisoned lock only means a panic elsewhere mid-update, and what it holds
 /// is still usable.
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(super) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Starts the program at `path`, and hands what it reads and writes to
+/// `talk`, run on the async runtime. However the talk ends, the process ends
+/// too; if it ends in an error, `status` says why and `wake` is called.
+///
+/// # Errors
+///
+/// If there is no async runtime for `what` to run on, or the program cannot
+/// be started.
+pub(super) fn launch<F, Fut>(
+    path: &Path,
+    what: &str,
+    status: Arc<Mutex<Status>>,
+    wake: Waker,
+    talk: F,
+) -> Result<(), String>
+where
+    F: FnOnce(ChildStdin, Lines<ChildStdout>) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|_| format!("{what} needs the async runtime"))?;
+    let _guard = runtime.enter();
+    let mut child = Command::new(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("could not start {}: {e}", path.display()))?;
+    runtime.spawn(async move {
+        let result = match (child.stdin.take(), child.stdout.take()) {
+            // Bounded, as a peer's lines are, and safe to race the game's
+            // asks.
+            (Some(stdin), Some(stdout)) => talk(stdin, Lines::new(stdout)).await,
+            _ => Err("the engine has no input or output".to_string()),
+        };
+        // However it ended, the process ends too, and is waited for so it
+        // does not linger as a zombie: a moment to leave on its own after
+        // `quit`, and then it is killed.
+        if tokio::time::timeout(LEAVE, child.wait()).await.is_err() {
+            let _ = child.kill().await;
+        }
+        if let Err(why) = result {
+            *lock(&status) = Status::Failed(why);
+            wake();
+        }
+    });
+    Ok(())
+}
+
+/// Says hello to the engine and waits to hear it back, handing `heard` each
+/// line it says before then: that is where it lists its options.
+///
+/// # Errors
+///
+/// If the engine stops, or does not answer in time.
+pub(super) async fn hello(
+    stdin: &mut ChildStdin,
+    lines: &mut Lines<ChildStdout>,
+    mut heard: impl FnMut(&str),
+) -> Result<(), String> {
+    let gone = |e: std::io::Error| format!("the engine stopped: {e}");
+    send(stdin, "uci").await?;
+    let hello = async {
+        while let Some(line) = lines.next_line().await.map_err(gone)? {
+            if line.trim() == "uciok" {
+                return Ok(());
+            }
+            heard(&line);
+        }
+        Err("the engine quit before it was ready".to_string())
+    };
+    tokio::time::timeout(HANDSHAKE, hello)
+        .await
+        .map_err(|_| "the engine did not answer".to_string())?
 }
 
 /// Where an engine is, if there is one: `TUITUI_ENGINE` if it is set, else
@@ -275,31 +336,15 @@ fn search(name: &std::ffi::OsStr) -> Option<PathBuf> {
 
 /// Talks to the engine until the game lets go of it.
 async fn drive(
-    child: &mut Child,
+    mut stdin: ChildStdin,
+    mut lines: Lines<ChildStdout>,
     mut asked: UnboundedReceiver<Ask>,
     evals: &Evals,
     status: &Arc<Mutex<Status>>,
     wake: &Waker,
 ) -> Result<(), String> {
-    let mut stdin = child.stdin.take().ok_or("the engine has no input")?;
-    let stdout = child.stdout.take().ok_or("the engine has no output")?;
-    // Bounded, as a peer's lines are, and safe to race the game's asks.
-    let mut lines = Lines::new(stdout);
     let gone = |e: std::io::Error| format!("the engine stopped: {e}");
-
-    // Say hello, and wait to hear it back.
-    send(&mut stdin, "uci").await?;
-    let hello = async {
-        while let Some(line) = lines.next_line().await.map_err(gone)? {
-            if line.trim() == "uciok" {
-                return Ok(());
-            }
-        }
-        Err("the engine quit before it was ready".to_string())
-    };
-    tokio::time::timeout(HANDSHAKE, hello)
-        .await
-        .map_err(|_| "the engine did not answer".to_string())??;
+    hello(&mut stdin, &mut lines, |_| {}).await?;
     let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4));
     send(
         &mut stdin,
@@ -410,7 +455,7 @@ fn pick(
         .map(|fen| (fen.clone(), GRADE))
 }
 
-async fn send(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
+pub(super) async fn send(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
     let write = async {
         stdin.write_all(format!("{line}\n").as_bytes()).await?;
         stdin.flush().await
@@ -424,7 +469,7 @@ async fn send(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
 
 /// A line from the engine worth acting on.
 #[derive(Debug, PartialEq, Eq)]
-enum Said {
+pub(super) enum Said {
     /// How the search is going, with the score for the side to move.
     Info {
         depth: u32,
@@ -438,7 +483,7 @@ enum Said {
 /// `info … depth 18 … score cp 34 … pv e2e4 e7e5` and `bestmove e2e4`. An
 /// info line without a depth and an exact score says nothing to act on, and
 /// neither does one for a line other than the best.
-fn parse(line: &str) -> Option<Said> {
+pub(super) fn parse(line: &str) -> Option<Said> {
     let mut words = line.split_whitespace();
     match words.next()? {
         "bestmove" => {

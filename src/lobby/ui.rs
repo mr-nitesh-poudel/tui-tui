@@ -176,6 +176,8 @@ impl LobbyGeometry {
         let games = cells(Kind::ALL.len());
         let card_w = (content_w.saturating_sub(CARD_GAP * (games - 1)) / games).min(CARD_W);
         let friends = cells(rows.iter().filter(|r| matches!(r, Row::Friend(_))).count());
+        // Room for every item, whether the game picked has it or not, so
+        // the screen keeps still as the games change.
         let actions_h = 1 + cells(Item::ALL.len());
         let friends_h = 1 + friends.max(1);
 
@@ -750,6 +752,9 @@ fn status_line(g: &LobbyGeometry, lobby: &Lobby, rows: &[Row]) -> Line<'static> 
             format!("a game of {game} on your own")
         }
         Some(Row::Item(Item::Local)) => format!("two players taking turns at {game} here"),
+        Some(Row::Item(Item::Bot)) => {
+            format!("a game of {game} against the computer, as strong as you choose")
+        }
         Some(Row::Friend(n)) => {
             let name = lobby.friends.get(*n).map_or("them", |f| f.name.as_str());
             format!("challenge {name} to a game of {game}")

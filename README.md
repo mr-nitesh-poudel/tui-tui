@@ -24,6 +24,7 @@ shared, so more can follow.
    ── Play Chess ──────────────     ── Challenge a friend ─────
     ▸ Host a game                      alice   3 games · 3h ago
       Play solo                        bob   1 game · yesterday
+      Play a bot
 
    ╭ Join a game with a code ─────────────────────────────────╮
    │ › e.g. 42-tiger-marble-ocean                             │
@@ -60,6 +61,7 @@ tuitui                            # the lobby
 tuitui host                       # or skip it: host a game,
 tuitui join 42-tiger-marble-ocean # join one,
 tuitui local                      # or share a keyboard
+tuitui bot                        # or play the computer
 tuitui play wordle                # the lobby, on a game of your choosing
 tuitui local wordle               # wordle on your own
 ```
@@ -89,7 +91,7 @@ down. The keyboard does everything too:
 | `c` | copy your share code |
 | `r` / `d` | resign / offer a draw |
 | `t` | chat with your opponent (or click the chat panel); `enter` sends, `esc` goes back to the board |
-| `a` | analyse with an engine: an evaluation bar, the best move, and each move graded (hot-seat, or once a game is over) |
+| `a` | analyse with an engine: an evaluation bar, the best move, and each move graded (hot-seat, against the bot, or once a game is over) |
 | `,` / `.` | step back and forward through the game (the arrows too, once it is over); `esc` comes back |
 | `q` / `esc` | leave (it asks first) |
 
@@ -100,6 +102,19 @@ Checkmate is not a status line. The board goes dark, the square flashes red,
 and the losing king topples over away from whatever mated it before the
 verdict is spelled out across the board. Resigning lays your king down gently
 instead. Any key puts the board back.
+
+## Playing the bot
+
+**Play a bot** in the lobby, or `tuitui bot`, sets Stockfish against you. Before
+the first move, pick how strong it plays (1350 to 3150 Elo, `←`/`→` in steps
+of 50) and which side you take (white, black or random), then `enter`. It
+thinks for about a second a move. It finds its engine the same way analysis
+does, below, and offers to download Stockfish if there is none. An engine
+that can't be held to a strength plays at full strength, and its card says
+so.
+
+Analysis is open the whole game, since the only person it can help is you.
+The bot never offers a draw, and doesn't take one.
 
 ## Analysis
 
@@ -116,7 +131,8 @@ engine it offers to download Stockfish from its official releases (about
 it's unpacked, and kept in tuitui's data folder with its licence.
 
 An engine is advice, so it isn't available during a game against someone
-else, only once it's over. Hot-seat can use it any time.
+else, only once it's over. Hot-seat and games against the bot can use it any
+time.
 
 ## Wordle
 

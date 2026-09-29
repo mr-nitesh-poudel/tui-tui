@@ -13,15 +13,16 @@ use super::pieces::piece_cell;
 use super::{FLASH, Geometry, LIGHT, MATE_RED, PieceStyle, VERDICT_BG, side_name};
 use crate::games::chess::analysis::{Grade, Thinking};
 use crate::games::chess::app::{App, Ending, Finale, Tone};
+use crate::games::chess::bot::Versus;
 use crate::games::chess::canvas;
 use crate::games::chess::rules::PROMOTION_ROLES;
 use crate::games::{Conn, Ctx, chrome};
 use crate::ui::{BRIGHT, CAPTURE, CURSOR, MUTED, SELECTED, blend, cells, centred, keycaps};
 
 /// Words that should be read, but are not the point.
-const QUIET: Color = Color::Rgb(186, 182, 176);
+pub(super) const QUIET: Color = Color::Rgb(186, 182, 176);
 /// Behind the latest move.
-const HIGHLIGHT: Color = Color::Rgb(58, 54, 50);
+pub(super) const HIGHLIGHT: Color = Color::Rgb(58, 54, 50);
 
 /// A glow behind the state line, and the colour of its words, for each tone.
 fn tone_style(tone: Tone) -> Style {
@@ -83,7 +84,7 @@ fn card(app: &App, ctx: &Ctx, side: Side, width: u16) -> Card {
     let muted = Style::default().fg(MUTED);
 
     // With nobody there yet, the opponent's card is about getting them here.
-    if opponent && !matches!(ctx.conn, Conn::Playing | Conn::Lost(_)) {
+    if opponent && app.versus.is_none() && !matches!(ctx.conn, Conn::Playing | Conn::Lost(_)) {
         let title = if ctx.conn == Conn::Waiting {
             "share this code"
         } else {
@@ -99,7 +100,10 @@ fn card(app: &App, ctx: &Ctx, side: Side, width: u16) -> Card {
 
     let title = match app.me {
         None => side_name(side).to_string(),
-        Some(_) if opponent => ctx.peer_label(),
+        Some(_) if opponent => app
+            .versus
+            .as_ref()
+            .map_or_else(|| ctx.peer_label(), Versus::title),
         Some(_) => "you".into(),
     };
     let letters = matches!(app.piece_style, PieceStyle::Letter | PieceStyle::BigLetter);
@@ -452,7 +456,14 @@ pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
     };
     let over = !app.in_play();
     // The most useful first, as the narrowest screens keep only those.
-    let keys: Vec<(&str, &str)> = if app.game.promotion.is_some() {
+    let keys: Vec<(&str, &str)> = if app.choosing().is_some() {
+        vec![
+            ("←/→", "change"),
+            ("↑/↓", "next"),
+            ("enter", "start"),
+            ("q", "lobby"),
+        ]
+    } else if app.game.promotion.is_some() {
         vec![
             ("click/←→", "choose"),
             ("enter", "promote"),
@@ -475,7 +486,11 @@ pub(super) fn draw_footer(f: &mut Frame, area: Rect, app: &App, ctx: &Ctx) {
             ("q", "lobby"),
         ]
     } else {
-        let mut keys = vec![("click", "move"), ("r", "resign"), ("d", "draw")];
+        let mut keys = vec![("click", "move"), ("r", "resign")];
+        // The bot neither offers a draw nor takes one.
+        if app.versus.is_none() {
+            keys.push(("d", "draw"));
+        }
         if ctx.has_chat() {
             keys.push(("t", "chat"));
         }
@@ -632,13 +647,13 @@ pub(super) fn draw_verdict(
         let loser = app.game.resigned.unwrap_or(app.game.turn());
         let verdict = match (fin.how, app.me) {
             (Ending::Checkmate, Some(me)) if me == loser => {
-                format!("{} wins", ctx.peer_label())
+                format!("{} wins", app.opponent(ctx))
             }
             (Ending::Checkmate, Some(_)) => "you win".to_string(),
             (Ending::Checkmate, None) => format!("{} wins", side_name(!loser)),
             (Ending::Resignation, Some(me)) if me == loser => "you resigned".to_string(),
             (Ending::Resignation, Some(_)) => {
-                format!("{} resigned · you win", ctx.peer_label())
+                format!("{} resigned · you win", app.opponent(ctx))
             }
             (Ending::Resignation, None) => {
                 format!("{} resigns · {} wins", side_name(loser), side_name(!loser))

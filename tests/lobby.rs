@@ -78,9 +78,19 @@ fn left_and_right_change_the_game_from_anywhere() {
 
     for selected in 0..lobby.rows().len() {
         lobby.selected = selected;
+        let mut row = lobby.rows()[selected];
         for code in [KeyCode::Right, KeyCode::Left] {
             assert_eq!(key(&mut lobby, code), None, "{code:?} starts nothing");
-            assert_eq!(lobby.selected, selected, "and leaves the selection be");
+            // The same row stays selected where the game has it; a game
+            // without a bot falls back to the last thing it does have.
+            let rows = lobby.rows();
+            let want = if rows.contains(&row) {
+                row
+            } else {
+                Row::Item(Item::Local)
+            };
+            assert_eq!(rows[lobby.selected], want, "{code:?} from {row:?}");
+            row = want;
         }
     }
     key(&mut lobby, KeyCode::Right);
@@ -97,6 +107,25 @@ fn left_and_right_change_the_game_from_anywhere() {
 fn what_is_offered_reads_the_same_for_every_game() {
     assert_eq!(Item::Host.label(), "Host a game");
     assert_eq!(Item::Local.label(), "Play solo");
+    assert_eq!(Item::Bot.label(), "Play a bot");
+}
+
+#[test]
+fn a_bot_is_offered_only_for_a_game_that_has_one() {
+    let mut lobby = Lobby::new();
+    for (i, kind) in Kind::ALL.iter().enumerate() {
+        lobby.game = i;
+        let offered = lobby.rows().contains(&Row::Item(Item::Bot));
+        assert_eq!(offered, kind.has_bot(), "{kind:?}");
+    }
+    assert!(tui_tui::games::chess::KIND.has_bot());
+    assert!(!tui_tui::games::wordle::KIND.has_bot());
+
+    lobby.game = 0;
+    lobby.selected = index(&lobby, Item::Bot);
+    assert_eq!(key(&mut lobby, KeyCode::Enter), Some(Choice::Bot));
+    // Third, after hosting and playing locally.
+    assert_eq!(lobby.selected, 2);
 }
 
 #[test]
@@ -242,6 +271,8 @@ fn clicking_an_item_chooses_it() {
     let card = g.cards[last];
     assert_eq!(lobby.on_mouse(mouse(click, (card.x + 1, card.y + 1))), None);
     assert_eq!(lobby.game, last);
+    // Which may have different rows.
+    let g = LobbyGeometry::new(lobby.area, &lobby);
 
     // The name renames.
     assert_eq!(lobby.on_mouse(mouse(click, (g.name.x + 1, g.name.y))), None);
@@ -287,7 +318,7 @@ fn the_shelf_gives_way_before_the_rows() {
     let lobby = Lobby::new();
     let shelf = |w, h| LobbyGeometry::new(Rect::new(0, 0, w, h), &lobby).shelf;
     assert_eq!(shelf(80, 24), Shelf::Cards { thumbs: true });
-    assert_eq!(shelf(80, 19), Shelf::Cards { thumbs: false });
+    assert_eq!(shelf(80, 20), Shelf::Cards { thumbs: false });
     assert_eq!(shelf(80, 16), Shelf::Tabs);
     assert_eq!(shelf(30, 24), Shelf::Tabs);
 
@@ -315,8 +346,9 @@ fn enter_on_a_friend_challenges_them_and_x_forgets() {
     assert_eq!(lobby.rows()[lobby.selected], Row::Code);
     key(&mut lobby, KeyCode::Tab);
     // As do the arrows, past what there is to do.
-    key(&mut lobby, KeyCode::Down);
-    key(&mut lobby, KeyCode::Down);
+    for _ in 0..=index(&lobby, Item::Bot) {
+        key(&mut lobby, KeyCode::Down);
+    }
     assert_eq!(lobby.rows()[lobby.selected], Row::Friend(0));
     assert_eq!(
         key(&mut lobby, KeyCode::Enter),
@@ -353,7 +385,7 @@ fn the_selection_stays_put_when_friends_change() {
     lobby.set_friends(vec![]);
     assert_eq!(lobby.rows()[lobby.selected], Row::Item(Item::Local));
 
-    lobby.selected = index(&lobby, Item::Local) + 1;
+    lobby.selected = lobby.rows().iter().position(|&r| r == Row::Code).unwrap();
     lobby.set_friends(vec![friend("alice", 0), friend("bob", 0)]);
     assert_eq!(lobby.rows()[lobby.selected], Row::Code);
 

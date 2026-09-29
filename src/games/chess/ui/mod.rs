@@ -9,9 +9,10 @@ mod bar;
 mod board;
 mod panels;
 mod pieces;
+mod setup;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::prelude::*;
 
 use shakmaty::{Color as Side, File, Rank, Square};
@@ -19,8 +20,10 @@ use shakmaty::{Color as Side, File, Rank, Square};
 use bar::draw_bar;
 use board::{draw_board, draw_slide};
 use panels::{draw_footer, draw_promotion, draw_sidebar, draw_verdict};
+use setup::draw_setup;
 
 use super::app::App;
+use super::bot::Setting;
 use super::rules::PROMOTION_ROLES;
 use crate::games::{Ctx, chat};
 use crate::ui::{cells, centred};
@@ -104,6 +107,17 @@ const CHAT_MIN_H: u16 = 6;
 /// bar three wide, which is room for a score like `1.3` or `M4`.
 const BAR_W: u16 = 5;
 
+/// The box of choices before a game against the bot, and the widths of the
+/// pieces of each line in it: a label, an arrow either side of the value,
+/// and the button that starts the game.
+const SETUP_W: u16 = 34;
+const SETUP_H: u16 = 7;
+const SETUP_LABEL: u16 = 10;
+const SETUP_ARROW: u16 = 3;
+const SETUP_VALUE: u16 = 10;
+const SETUP_LINE: u16 = SETUP_LABEL + 1 + SETUP_ARROW + SETUP_VALUE + SETUP_ARROW;
+const SETUP_BUTTON: u16 = 9;
+
 /// Where everything sits this frame.
 pub struct Geometry {
     pub board: Rect,
@@ -120,6 +134,120 @@ pub struct Geometry {
     pub footer: Rect,
     pub promo: Rect,
     pub promo_cell: u16,
+    /// The choices before a game against the bot, over the board.
+    pub setup: SetupGeometry,
+}
+
+/// Where the choices before a game against the bot sit: a line for each of
+/// [`Setting::ALL`], in the same order, and the button that starts the game.
+/// Anything that does not fit on the screen is empty.
+pub struct SetupGeometry {
+    pub area: Rect,
+    /// Each setting's whole line, then its parts: the label, the arrow that
+    /// lowers the value, the value, and the arrow that raises it.
+    pub lines: [Rect; 2],
+    pub labels: [Rect; 2],
+    pub less: [Rect; 2],
+    pub values: [Rect; 2],
+    pub more: [Rect; 2],
+    /// The line along the bottom, and the button in the middle of it.
+    pub foot: Rect,
+    pub start: Rect,
+}
+
+/// What a click on the choices before a game against the bot landed on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupHit {
+    Less(Setting),
+    More(Setting),
+    Line(Setting),
+    Start,
+}
+
+impl SetupGeometry {
+    /// Over the middle of the board, but kept on the screen, where it may
+    /// be wider than the board.
+    fn new(screen: Rect, board: Rect) -> Self {
+        let (w, h) = (SETUP_W.min(screen.width), SETUP_H.min(screen.height));
+        let middle = |start: u16, len: u16, size: u16, lo: u16, hi: u16| {
+            start
+                .saturating_add(len / 2)
+                .saturating_sub(size / 2)
+                .min(hi.saturating_sub(size))
+                .max(lo)
+        };
+        let area = Rect {
+            x: middle(board.x, board.width, w, screen.x, screen.right()),
+            y: middle(board.y, board.height, h, screen.y, screen.bottom()),
+            width: w,
+            height: h,
+        };
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: w.saturating_sub(2),
+            height: h.saturating_sub(2),
+        };
+        let line = |row: u16| {
+            Rect {
+                y: inner.y.saturating_add(row),
+                height: 1,
+                ..inner
+            }
+            .intersection(inner)
+        };
+        let left = inner
+            .x
+            .saturating_add(inner.width.saturating_sub(SETUP_LINE) / 2);
+        let part = |line: Rect, from: u16, width: u16| {
+            Rect {
+                x: left.saturating_add(from),
+                y: line.y,
+                width,
+                height: 1,
+            }
+            .intersection(line)
+        };
+        let lines = [line(1), line(2)];
+        let foot = line(4);
+        Self {
+            area,
+            lines,
+            labels: lines.map(|l| part(l, 0, SETUP_LABEL)),
+            less: lines.map(|l| part(l, SETUP_LABEL + 1, SETUP_ARROW)),
+            values: lines.map(|l| part(l, SETUP_LABEL + 1 + SETUP_ARROW, SETUP_VALUE)),
+            more: lines.map(|l| part(l, SETUP_LABEL + 1 + SETUP_ARROW + SETUP_VALUE, SETUP_ARROW)),
+            foot,
+            start: Rect {
+                x: foot
+                    .x
+                    .saturating_add(foot.width.saturating_sub(SETUP_BUTTON) / 2),
+                width: SETUP_BUTTON,
+                ..foot
+            }
+            .intersection(foot),
+        }
+    }
+
+    /// What is under a screen position, if anything.
+    #[must_use]
+    pub fn at(&self, x: u16, y: u16) -> Option<SetupHit> {
+        let at = Position::new(x, y);
+        if self.start.contains(at) {
+            return Some(SetupHit::Start);
+        }
+        Setting::ALL.iter().enumerate().find_map(|(i, &setting)| {
+            if self.less[i].contains(at) {
+                Some(SetupHit::Less(setting))
+            } else if self.more[i].contains(at) {
+                Some(SetupHit::More(setting))
+            } else {
+                self.lines[i]
+                    .contains(at)
+                    .then_some(SetupHit::Line(setting))
+            }
+        })
+    }
 }
 
 impl Geometry {
@@ -253,6 +381,7 @@ impl Geometry {
             footer,
             promo,
             promo_cell,
+            setup: SetupGeometry::new(area, board),
         }
     }
 
@@ -318,6 +447,7 @@ pub fn draw(f: &mut Frame, app: &App, ctx: &Ctx) {
         chat::draw(f, area, ctx);
     }
     draw_footer(f, g.footer, app, ctx);
+    draw_setup(f, &g.setup, app);
 
     if app.game.promotion.is_some() {
         draw_promotion(f, &g, app);

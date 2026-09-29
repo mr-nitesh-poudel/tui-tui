@@ -261,7 +261,7 @@ impl Hub {
         // Starting anything means we cannot also answer a friend.
         let starts_match = matches!(
             choice,
-            Choice::Host | Choice::Join(_) | Choice::Local | Choice::Challenge(_)
+            Choice::Host | Choice::Join(_) | Choice::Local | Choice::Bot | Choice::Challenge(_)
         );
         if starts_match && let Some(invite) = self.invite.take() {
             invite.refuse("busy");
@@ -273,6 +273,13 @@ impl Hub {
             Choice::Local => {
                 self.listener.busy();
                 self.new_match(game.start(Seat::Local, Ctx::local()), false)
+            }
+            Choice::Bot => {
+                let Some(table) = game.start_bot(Ctx::local()) else {
+                    return Next::Stay;
+                };
+                self.listener.busy();
+                self.new_match(table, false)
             }
             Choice::Host => self.host(game),
             Choice::Join(code) => self.join(code, game),

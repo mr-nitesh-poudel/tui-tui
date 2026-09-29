@@ -7,8 +7,9 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, Mous
 use shakmaty::{Color, Move, Piece, Position, Role, Square};
 
 use super::analysis::Bar;
+use super::bot::{Bot, Versus};
 use super::download::Download;
-use super::engine::Engine;
+use super::engine::{Engine, Status};
 use super::protocol::Msg;
 use super::rules::{Game, PROMOTION_ROLES, ui_to};
 use super::ui::{Geometry, PieceStyle};
@@ -149,6 +150,8 @@ pub struct App {
     pub review: Option<usize>,
     /// The evaluation bar, easing from one score to the next.
     pub bar: Cell<Bar>,
+    /// Playing the bot, rather than someone.
+    pub versus: Option<Versus>,
 }
 
 impl App {
@@ -174,6 +177,7 @@ impl App {
             download: None,
             review: None,
             bar: Cell::default(),
+            versus: None,
         }
     }
 
@@ -193,9 +197,9 @@ impl App {
         }
     }
 
-    /// Whether the game is still being played, rather than decided.
+    /// Whether the game is still being played: begun, and not decided.
     pub fn in_play(&self) -> bool {
-        !(self.game.over() || self.draw_agreed)
+        !(self.game.over() || self.draw_agreed || self.choosing().is_some())
     }
 
     fn now(&self) -> Instant {
@@ -350,7 +354,7 @@ impl App {
 
     /// Sets a move travelling. The piece is read off the board after the move,
     /// so a promotion slides in as whatever it became.
-    fn begin_slide(&mut self, m: Move) {
+    pub(super) fn begin_slide(&mut self, m: Move) {
         // The finale, or the check's pulse, starts as the piece lands.
         if self.game.pos.is_checkmate() {
             self.ended = Some(self.now() + SLIDE);
@@ -375,10 +379,11 @@ impl App {
         self.begin_slide(m);
         let uci = self.game.to_uci(m);
         ctx.send(Msg::Move(uci).line());
+        self.prompt_bot();
     }
 
     /// Is it our move? Always true in hot-seat.
-    fn my_turn(&self) -> bool {
+    pub(super) fn my_turn(&self) -> bool {
         self.me.is_none_or(|me| me == self.game.turn())
     }
 
@@ -407,6 +412,12 @@ impl App {
         if let Some(note) = &ctx.note {
             return (note.clone(), Tone::Warn);
         }
+        if self.choosing().is_some() {
+            return ("pick a strength and a side".into(), Tone::Go);
+        }
+        if let Some(Status::Failed(why)) = self.bot().map(Bot::status) {
+            return (why, Tone::Warn);
+        }
         if self.draw_offered {
             return ("draw offered".into(), Tone::Offer);
         }
@@ -421,9 +432,18 @@ impl App {
             return (format!("{turn} to move"), Tone::Go);
         }
         if !self.my_turn() {
-            return (format!("{} is thinking…", ctx.peer_label()), Tone::Wait);
+            return (format!("{} is thinking…", self.opponent(ctx)), Tone::Wait);
         }
         ("your move".into(), Tone::Go)
+    }
+
+    /// Who is playing the other side, when that is not someone here.
+    pub fn opponent(&self, ctx: &Ctx) -> String {
+        if self.versus.is_some() {
+            "the bot".into()
+        } else {
+            ctx.peer_label()
+        }
     }
 
     /// A key the table passed on. Leaving, the mouse and the share code are
@@ -454,6 +474,9 @@ impl App {
                 self.start_download(ctx);
             }
             return Handled::Used;
+        }
+        if self.choosing().is_some() {
+            return self.setup_key(key.code, ctx);
         }
         if self.confirm_resign {
             self.confirm_resign = false;
@@ -648,6 +671,10 @@ impl App {
         }
         if self.confirm_resign {
             self.confirm_resign = false;
+            return;
+        }
+        if self.choosing().is_some() {
+            self.setup_click(g, x, y, ctx);
             return;
         }
         // A click on the board while looking back comes back to the game.

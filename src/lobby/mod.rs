@@ -1,7 +1,8 @@
 //! The first screen: a shelf of games along the top, and under it what can be
-//! done with the one picked: host it, play it solo, or challenge a friend to
-//! it. Beneath those, a box to type a code into and join, which needs no game
-//! (the host names it); typing a code's number anywhere starts one there.
+//! done with the one picked: host it, play it solo, play a bot at it where it
+//! has one, or challenge a friend to it. Beneath those, a box to type a code
+//! into and join, which needs no game (the host names it); typing a code's
+//! number anywhere starts one there.
 //!
 //! Like a game, this only holds state and decides what a key or click means;
 //! [`draw_lobby`] draws it and `main` acts on the [`Choice`] it returns.
@@ -31,11 +32,13 @@ use crate::session::name::NAME_MAX;
 pub enum Item {
     Host,
     Local,
+    /// Only for a game that can be played against the computer.
+    Bot,
 }
 
 impl Item {
     /// In the order they are listed.
-    pub const ALL: [Item; 2] = [Item::Host, Item::Local];
+    pub const ALL: [Item; 3] = [Item::Host, Item::Local, Item::Bot];
 
     /// What the item says. The status bar says what it means for the game
     /// picked: on your own, or two taking turns at one keyboard.
@@ -44,6 +47,7 @@ impl Item {
         match self {
             Item::Host => "Host a game",
             Item::Local => "Play solo",
+            Item::Bot => "Play a bot",
         }
     }
 }
@@ -71,6 +75,7 @@ pub enum Choice {
     Host,
     Join(Code),
     Local,
+    Bot,
     Quit,
     Challenge(EndpointId),
     Rename(String),
@@ -147,8 +152,10 @@ impl Lobby {
 
     pub fn rows(&self) -> Vec<Row> {
         let friends = self.friends.len().min(FRIENDS_SHOWN);
+        let bot = self.game().has_bot();
         Item::ALL
             .into_iter()
+            .filter(|&item| item != Item::Bot || bot)
             .map(Row::Item)
             .chain((0..friends).map(Row::Friend))
             .chain([Row::Code])
@@ -173,7 +180,21 @@ impl Lobby {
     /// Steps through the games, wrapping round at either end.
     fn next_game(&mut self, step: isize) {
         let n = Kind::ALL.len().cast_signed();
-        self.game = (self.game.cast_signed() + step).rem_euclid(n) as usize;
+        self.pick_game((self.game.cast_signed() + step).rem_euclid(n) as usize);
+    }
+
+    /// Picks the game at `index` in [`Kind::ALL`], keeping the same row
+    /// selected: not every game has every row, and the rows below one that
+    /// comes or goes move up or down.
+    fn pick_game(&mut self, index: usize) {
+        let was = self.rows().get(self.selected).copied();
+        self.game = index;
+        let rows = self.rows();
+        self.selected = was
+            .and_then(|row| rows.iter().position(|&r| r == row))
+            // Gone with the game: the last of what there is to do instead.
+            .or_else(|| rows.iter().rposition(|r| matches!(r, Row::Item(_))))
+            .unwrap_or(0);
     }
 
     fn row_of(&self, row: Row) -> usize {
@@ -342,7 +363,7 @@ impl Lobby {
                     return self.activate(i);
                 }
                 if let Some(game) = g.card_at(ev.column, ev.row) {
-                    self.game = game;
+                    self.pick_game(game);
                 } else if g.name.contains(at) {
                     self.rename();
                 } else if g.input.contains(at) {
@@ -373,6 +394,7 @@ impl Lobby {
         match *self.rows().get(i)? {
             Row::Item(Item::Host) => Some(Choice::Host),
             Row::Item(Item::Local) => Some(Choice::Local),
+            Row::Item(Item::Bot) => Some(Choice::Bot),
             Row::Friend(f) => self.friends.get(f).map(|f| Choice::Challenge(f.id)),
             Row::Code => {
                 self.edit(Field::Code);
